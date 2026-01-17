@@ -18,6 +18,8 @@ type DownloadRequest struct {
 	HttpClient *greenhttp.HTTPClient
 }
 
+// SplitIntoChunks divides the total file size into byte range chunks for parallel downloading.
+// It returns a 2D array where each element contains the start and end byte positions for a chunk.
 func (d *DownloadRequest) SplitIntoChunks() [][2]int {
 	arr := make([][2]int, d.Chunks)
 
@@ -30,12 +32,14 @@ func (d *DownloadRequest) SplitIntoChunks() [][2]int {
 			arr[i][1] = d.TotalSize - 1
 		} else {
 			arr[i][0] = arr[i-1][1] + 1
-			arr[i][1] = arr[i][0] + d.Chunksize	
+			arr[i][1] = arr[i][0] + d.Chunksize
 		}
 	}
 	return arr
 }
 
+// Download downloads a specific chunk of the file using HTTP range requests.
+// It saves the chunk to a temporary file and returns an error if the download fails.
 func (d *DownloadRequest) Download(idx int, byteChunk [2]int) error {
 	log.Printf("Downloading chunk %v", idx)
 
@@ -49,7 +53,7 @@ func (d *DownloadRequest) Download(idx int, byteChunk [2]int) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()	
+	defer resp.Body.Close()
 
 	if resp.StatusCode > 299 {
 		return fmt.Errorf("[INVALID] Cant Process, response = %v", resp.StatusCode)
@@ -78,6 +82,8 @@ func (d *DownloadRequest) Download(idx int, byteChunk [2]int) error {
 	return nil
 }
 
+// MergeDownloads combines all downloaded chunk files into a single output file.
+// It reads each temporary chunk file in order and writes them sequentially to the final file.
 func (d *DownloadRequest) MergeDownloads() error {
 	out, err := os.Create(d.FileName)
 	if err != nil {
@@ -98,8 +104,6 @@ func (d *DownloadRequest) MergeDownloads() error {
 
 		in.Close()
 
-
-
 		if err != nil {
 			return fmt.Errorf("Failed Merging Chunk File %s to %v", fname, err)
 		}
@@ -109,6 +113,8 @@ func (d *DownloadRequest) MergeDownloads() error {
 	return nil
 }
 
+// CleanUpTempFiles removes all temporary chunk files created during the download process.
+// It returns an error if any file cannot be removed.
 func (d *DownloadRequest) CleanUpTempFiles() error {
 	log.Println("Starting to clean up the temp files")
 

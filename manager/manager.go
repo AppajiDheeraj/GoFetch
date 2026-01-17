@@ -11,24 +11,29 @@ import (
 	"sync"
 )
 
+// Init initializes the downloader by printing the startup message of the day (MOTD).
 func Init() {
 	fmt.Println(util.InitMotd)
 }
 
-func End(){
+// End prints the end message of the day (MOTD) when the downloader finishes.
+func End() {
 	fmt.Println(util.EndMotd)
 }
 
+// Run orchestrates the concurrent download process for the given URL.
+// It performs a HEAD request to get file metadata, splits the download into chunks,
+// downloads each chunk concurrently, merges the chunks, and cleans up temporary files.
 func Run(urlPtr *url.URL) {
 	client := greenhttp.NewHTTPClient()
 
 	url := urlPtr.String()
 	method := "HEAD"
 	headers := map[string]string{
-		"User-Agent" : "CFD-Downloader",
+		"User-Agent": "CFD-Downloader",
 	}
 
-	resp, err := client.Do(method,url,headers)
+	resp, err := client.Do(method, url, headers)
 
 	if err != nil {
 		log.Fatal(err)
@@ -36,7 +41,7 @@ func Run(urlPtr *url.URL) {
 
 	contentLength := resp.Header.Get(util.CONTENT_LENGTH_HEADER)
 	contentLengthInBytes, err := strconv.Atoi(contentLength)
-	
+
 	if err != nil {
 		log.Fatal("Unsupported file download type.... Empty size sent by server ", err)
 	}
@@ -49,7 +54,7 @@ func Run(urlPtr *url.URL) {
 		log.Fatal("Error extracting filename...")
 	}
 
-	log.Printf("FileName extracted: %v",fname)
+	log.Printf("FileName extracted: %v", fname)
 
 	chunks := util.WORKER_ROUTINES
 	log.Printf("Set %v parrallel workers/connections", chunks)
@@ -58,23 +63,23 @@ func Run(urlPtr *url.URL) {
 	log.Println("Each chunk size: ", chunkSize)
 
 	downReq := &models.DownloadRequest{
-		Url: url,
-		FileName: fname,
-		Chunks: chunks,
-		Chunksize: chunkSize,
-		TotalSize: contentLengthInBytes,
+		Url:        url,
+		FileName:   fname,
+		Chunks:     chunks,
+		Chunksize:  chunkSize,
+		TotalSize:  contentLengthInBytes,
 		HttpClient: client,
 	}
 
-	byteRangeArray := make([][2]int,chunks)
+	byteRangeArray := make([][2]int, chunks)
 	byteRangeArray = downReq.SplitIntoChunks()
 	fmt.Println(byteRangeArray)
 
 	var wg sync.WaitGroup
 	for idx, byteChunk := range byteRangeArray {
 		wg.Add(1)
-		
-		go func(idx int, byteChunk [2]int){
+
+		go func(idx int, byteChunk [2]int) {
 			defer wg.Done()
 			err := downReq.Download(idx, byteChunk)
 			if err != nil {
@@ -89,13 +94,13 @@ func Run(urlPtr *url.URL) {
 	err = downReq.MergeDownloads()
 
 	if err != nil {
-		log.Fatal("Failed merging tmp download files...",err)
+		log.Fatal("Failed merging tmp download files...", err)
 	}
 
 	err = downReq.CleanUpTempFiles()
 
 	if err != nil {
-		log.Fatal("Failed cleaning tmp download files...",err)
+		log.Fatal("Failed cleaning tmp download files...", err)
 	}
 
 	log.Printf("File Generated: %v\n\n", downReq.FileName)
