@@ -1,3 +1,7 @@
+// Package util provides utility functions used across the downloader application.
+// It contains helper functions for common operations like extracting filenames from URLs
+// and defines shared constants. This package centralizes reusable functionality to avoid
+// code duplication and maintain consistency.
 package util
 
 import (

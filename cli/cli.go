@@ -1,3 +1,6 @@
+// Package cli handles command-line interface interactions with the user.
+// It provides functions for reading user input, parsing URLs, and other CLI-related operations.
+// This package separates user interaction logic from the core download functionality.
 package cli
 
 import (
@@ -7,7 +10,7 @@ import (
 	"os"
 )
 
-func GetURLFromUser()(*url.URL, error){
+func GetURLFromUser() (*url.URL, error) {
 	// Create a new scanner that reads from standard input (keyboard)
 	scanner := bufio.NewScanner(os.Stdin)
 

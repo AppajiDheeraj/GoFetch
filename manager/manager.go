@@ -1,3 +1,7 @@
+// Package manager orchestrates the concurrent file download process.
+// It coordinates the workflow: fetching file metadata, splitting downloads into chunks,
+// managing parallel downloads, merging chunks, and cleanup. This package serves as the
+// main controller for the downloader application.
 package manager
 
 import (

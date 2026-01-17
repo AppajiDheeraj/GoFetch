@@ -1,3 +1,6 @@
+// Package greenhttp provides a wrapper around the standard http.Client for making HTTP requests.
+// It abstracts HTTP request creation and execution, making it easier to perform HTTP operations
+// with custom headers and request bodies throughout the downloader application.
 package greenhttp
 
 import (

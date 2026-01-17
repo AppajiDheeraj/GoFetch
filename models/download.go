@@ -1,3 +1,7 @@
+// Package models defines the core data structures and download operations.
+// It contains the DownloadRequest type and methods for chunking files, downloading chunks,
+// merging downloaded parts, and cleaning up temporary files. This package encapsulates
+// the business logic for the concurrent download functionality.
 package models
 
 import (

@@ -1,3 +1,6 @@
+// Package main is the entry point of the concurrent downloader application.
+// It initializes the downloader, prompts the user for a URL, and orchestrates
+// the download process through the manager package.
 package main
 
 import (
