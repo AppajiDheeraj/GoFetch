@@ -1,0 +1,21 @@
+project_name: gofetch
+
+builds:
+  - main: .
+    binary: gofetch
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+release:
+  github:
+    owner: AppajiDheeraj
+    name: GoFetch
