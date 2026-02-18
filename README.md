@@ -12,6 +12,11 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/AppajiDheeraj/GoFetch/release.yml?style=flat-square)](https://github.com/AppajiDheeraj/GoFetch/actions)
 [![Go Report Card](https://goreportcard.com/badge/github.com/AppajiDheeraj/GoFetch?style=flat-square)](https://goreportcard.com/report/github.com/AppajiDheeraj/GoFetch)
 
+<h4>
+  <a href="https://github.com/AppajiDheeraj/GoFetch/issues/new?template=bug_report.yml">Report Bug</a>
+·    
+  <a href="https://github.com/AppajiDheeraj/GoFetch/issues/new?template=feature_request.yml">Request Feature</a>
+</h4>
 </div>
 
 ---
