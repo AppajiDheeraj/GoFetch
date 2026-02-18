@@ -8,6 +8,8 @@ GoFetch/
 ├── cmd/
 │   └── gofetch/
 │       └── main.go              # CLI entrypoint
+├── pkg/
+│   └── gofetch/                  # Public, embeddable API
 ├── internal/
 │   ├── cli/                     # Cobra commands + CLI glue
 │   │   ├── add.go
@@ -37,6 +39,7 @@ GoFetch/
 │   └── probe.go                 # server probe logic
 ├── docs/
 │   ├── ARCHITECTURE.md
+│   ├── CONCURRENCY.md
 │   ├── DOCS.md
 │   └── FILE_STRUCTURE.md
 ├── go.mod

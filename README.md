@@ -112,6 +112,54 @@ Then enter the file URL:
 Enter the file URL to download: https://example.com/file.zip
 ```
 
+## 🧩 Public API (pkg/gofetch)
+
+GoFetch exposes a stable, embeddable API for other Go apps via the `pkg/gofetch` package.
+
+Install:
+
+```bash
+go get github.com/AppajiDheeraj/GoFetch@latest
+```
+
+Example:
+
+```go
+package main
+
+import (
+  "context"
+  "log"
+
+  "github.com/AppajiDheeraj/GoFetch/pkg/gofetch"
+)
+
+func main() {
+  client, err := gofetch.NewClient(&gofetch.ClientOptions{Verbose: true})
+  if err != nil {
+    log.Fatal(err)
+  }
+  defer func() {
+    _ = client.Shutdown()
+  }()
+
+  _, err = client.Add("https://example.com/file.zip", "./downloads", "", nil)
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  stream, cleanup, err := client.StreamEvents(context.Background())
+  if err != nil {
+    log.Fatal(err)
+  }
+  defer cleanup()
+
+  for msg := range stream {
+    _ = msg // handle events (DownloadStartedMsg, ProgressMsg, etc.)
+  }
+}
+```
+
 ### How It Works
 
 1. **URL Input**: Enter the URL of the file you want to download

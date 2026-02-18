@@ -7,10 +7,10 @@ import (
 	"fmt"
 
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"os/exec"
 	"strconv"
 	"sync/atomic"
 	"syscall"
@@ -90,8 +90,10 @@ var serverStopCmd = &cobra.Command{
 				cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F")
 				if runErr := cmd.Run(); runErr != nil {
 					fmt.Printf("Error stopping server: %v\n", err)
+					fmt.Println("If this persists, run the terminal as Administrator and retry 'GoFetch server stop'.")
 					return
 				}
+				fmt.Println("Stopped server using taskkill.")
 			}
 			cleanupRuntimeFiles()
 			fmt.Printf("Stopped server process %d\n", pid)

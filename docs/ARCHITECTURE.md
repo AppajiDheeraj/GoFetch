@@ -7,6 +7,7 @@ GoFetch is a concurrent downloader with a clear separation between the CLI surfa
 
 Key Packages
 ------------
+- pkg/gofetch: Public, embeddable API that wraps the internal engine.
 - internal/cli: Cobra commands and user-facing flags. No download logic here.
 - internal/download: The engine that manages probing, chunking, concurrent downloads, merge, and cleanup.
 - internal/download/concurrent: Worker pool, task queue, and concurrent chunk downloads.
@@ -39,7 +40,14 @@ State and Events
 - internal/state persists download metadata and resume data.
 - internal/events publishes progress and lifecycle changes for CLI and services.
 
+Work Stealing and Hedging
+-------------------------
+- Idle workers can split the largest active task to keep all workers busy.
+- If a task is too small to split, a duplicate is queued to race the original.
+- Both strategies keep byte ranges bounded and use idempotent writes for safety.
+
 CLI vs Engine Boundary
 ----------------------
 - CLI is responsible for argument parsing, UX, and invoking the engine.
 - Engine is responsible for all download behavior, retries, and state updates.
+- pkg/gofetch is the supported surface for community integrations and tooling.
