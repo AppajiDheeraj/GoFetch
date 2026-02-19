@@ -1,6 +1,7 @@
 # 🚀 GoFetch
 
 <div align="center">
+<img src="./Logo.svg" alt="GoFetch Logo" width="600" />
 
 ![GoFetch Banner](https://img.shields.io/badge/GoFetch-Concurrent%20File%20Downloader-blue?style=for-the-badge)
 
@@ -248,3 +249,79 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 Made with ❤️ by Appaji Dheeraj
 
 </div>
+
+Here is a senior‑engineer plan for adding adaptive worker scaling with TCP‑style AIMD control, without changing any files yet.
+
+Goal
+Add a self‑learning control loop that continuously tunes worker count, chunk size, and retry strategy using signals: throughput, RTT, packet loss, and chunk completion time. The system should converge quickly on good networks and remain stable on poor ones.
+
+Design Principles
+
+Keep the control loop isolated behind a small interface.
+Do not intertwine metrics collection with download logic.
+Make changes incremental: metrics → controller → actuator.
+Ensure safe defaults and rate‑limited adjustments.
+Plan (High Level)
+
+Metrics Instrumentation (non-invasive)
+
+Define a central metrics struct with rolling windows:
+throughput_bps
+rtt_ms (if RTT is not explicit, approximate with time-to-first-byte or time-to-first-chunk-ack)
+loss_rate (based on retries / failed chunk attempts)
+chunk_completion_ms (duration of successful chunk)
+Collect at: worker completion, retry, failure, and scheduler assignment.
+Use exponential moving averages (EMA) + a short window for recent variance.
+Control Loop (AIMD)
+
+Run on a fixed interval (e.g., every 1–2 seconds).
+AIMD rules for worker count:
+Additive Increase: If loss low, RTT stable, throughput rising → workers += 1
+Multiplicative Decrease: If loss high or RTT spikes → workers = max(minWorkers, floor(workers * beta)) where beta ≈ 0.5–0.7
+AIMD rules for chunk size:
+Increase slowly when RTT stable and loss low.
+Decrease aggressively when loss or retry spikes.
+Retry strategy:
+If loss rises, increase backoff and reduce max concurrency.
+If network stable, lower backoff and allow more aggressive retries.
+Actuation Layer
+
+Provide a controller interface such as:
+RecommendWorkers()
+RecommendChunkSize()
+RecommendRetryPolicy()
+Scheduler consumes these recommendations but retains final say to avoid rapid oscillation.
+Rate-limit changes (e.g., max 1 worker change per control tick).
+Safety & Stability
+
+Use bounds: minWorkers, maxWorkers, minChunkSize, maxChunkSize.
+Add hysteresis to avoid thrashing.
+Store last 2–3 decisions; only apply if consistent.
+Ensure backward compatibility with current behavior when metrics are absent.
+Testing Strategy
+
+Unit tests for AIMD decisions with synthetic metrics.
+Simulation tests with predefined scenarios:
+good Wi‑Fi (low loss, stable RTT)
+hotspot (bursty loss, RTT spikes)
+slow DSL (high RTT, low throughput)
+Benchmarks for regressions.
+Observability
+
+Log control decisions with reason codes:
+INC_WORKERS, DEC_WORKERS, INC_CHUNK, DEC_CHUNK, RETRY_BACKOFF_UP
+Add optional debug mode to print the control loop summary.
+Deliverables
+
+A controller package that can be reused.
+Metrics pipeline with small, explicit hooks.
+Stability constraints and documented parameters.
+A short doc section: “Adaptive Scaling (AIMD)”.
+Proposed Sequence of Work (No Code Yet)
+
+Identify points to instrument metrics.
+Define metrics struct and EMA helpers.
+Implement control loop + AIMD rules.
+Wire in scheduler/worker pool hooks.
+Add safety limits and logging.
+Tests + docs.

@@ -5,6 +5,12 @@ Overview
 --------
 This document explains how the concurrent downloader balances work when some workers are slow or idle.
 
+Protocol Selection
+------------------
+- In auto mode, the downloader prefers HTTP/3 first, then HTTP/1.1, and uses HTTP/2 as a fallback.
+- This favors independent TCP connections for chunked downloads when HTTP/3 is unavailable or fails.
+- You can override this order with the `protocol_preference` setting.
+
 Work Stealing
 -------------
 - When a worker is idle, it can steal part of the remaining byte range from the busiest active worker.

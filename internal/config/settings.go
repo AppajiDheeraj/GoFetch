@@ -103,7 +103,7 @@ func GetSettingsMetadata() map[string][]SettingMeta {
 			{Key: "sequential_download", Label: "Sequential Download", Description: "Download pieces in order (Streaming Mode). May be slower.", Type: "bool"},
 			{Key: "min_chunk_size", Label: "Min Chunk Size", Description: "Minimum download chunk size in MB (e.g., 2).", Type: "int64"},
 			{Key: "worker_buffer_size", Label: "Worker Buffer Size", Description: "I/O buffer size per worker in KB (e.g., 512).", Type: "int"},
-			{Key: "protocol_preference", Label: "Protocol Preference", Description: "Transport preference: auto | http1 | http2 | http3. Auto will probe and choose the best available.", Type: "string"},
+			{Key: "protocol_preference", Label: "Protocol Preference", Description: "Transport preference: auto | http1 | http2 | http3. Auto probes and prefers http3 -> http1 -> http2 for chunked downloads.", Type: "string"},
 		},
 		"Performance": {
 			{Key: "max_task_retries", Label: "Max Task Retries", Description: "Number of times to retry a failed chunk before giving up.", Type: "int"},

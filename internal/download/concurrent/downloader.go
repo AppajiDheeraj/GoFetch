@@ -358,12 +358,12 @@ func (d *ConcurrentDownloader) newConcurrentClients(numConns int, supportsHTTP2 
 	default:
 		if supportsHTTP3 {
 			if supportsHTTP2 {
-				return makeSet(http3Client, http2Client, http1Client)
+				return makeSet(http3Client, http1Client, http2Client)
 			}
 			return makeSet(http3Client, http1Client)
 		}
 		if supportsHTTP2 {
-			return makeSet(http2Client, http1Client)
+			return makeSet(http1Client, http2Client)
 		}
 		return makeSet(http1Client)
 	}
