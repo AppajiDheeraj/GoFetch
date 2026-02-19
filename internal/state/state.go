@@ -15,12 +15,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// URLHash provides a short stable key for deduplication and backward compatibility.
 func URLHash(url string) string {
 	h := sha256.Sum256([]byte(url))
 	return hex.EncodeToString(h[:8]) // 16 chars
 }
 
-// SaveState saves download state to SQLite
+// SaveState saves download state to SQLite for pause/resume support.
 func SaveState(url string, destPath string, state *types.DownloadState) error {
 	// Ensure ID is set
 	if state.ID == "" {
@@ -29,7 +30,7 @@ func SaveState(url string, destPath string, state *types.DownloadState) error {
 		state.ID = uuid.New().String()
 	}
 
-	// Set hashes and timestamps
+	// Set hashes and timestamps for indexing and history.
 	state.URLHash = URLHash(url)
 	state.PausedAt = time.Now().Unix()
 	if state.CreatedAt == 0 {
@@ -37,7 +38,7 @@ func SaveState(url string, destPath string, state *types.DownloadState) error {
 	}
 
 	return withTx(func(tx *sql.Tx) error {
-		// 1. Upsert into downloads table
+		// 1. Upsert into downloads table for quick lookup.
 		_, err := tx.Exec(`
 			INSERT INTO downloads (
 				id, url, dest_path, filename, status, total_size, downloaded, url_hash, created_at, paused_at, time_taken, mirrors, chunk_bitmap, actual_chunk_size
@@ -61,7 +62,7 @@ func SaveState(url string, destPath string, state *types.DownloadState) error {
 			return fmt.Errorf("failed to upsert download: %w", err)
 		}
 
-		// 2. Refresh tasks
+		// 2. Refresh tasks so remaining work reflects current pause snapshot.
 		// First delete existing tasks for this download
 		if _, err := tx.Exec("DELETE FROM tasks WHERE download_id = ?", state.ID); err != nil {
 			return fmt.Errorf("failed to delete old tasks: %w", err)
@@ -84,7 +85,8 @@ func SaveState(url string, destPath string, state *types.DownloadState) error {
 	})
 }
 
-
+// LoadState loads the latest paused state for a URL/path pair.
+// It prefers the most recent pause to avoid stale task lists.
 func LoadState(url string, destPath string) (*types.DownloadState, error) {
 	db := getDBHelper()
 	if db == nil {
@@ -162,6 +164,7 @@ func LoadState(url string, destPath string) (*types.DownloadState, error) {
 	return &state, nil
 }
 
+// DeleteState removes a paused state entry after completion or explicit delete.
 func DeleteState(id string, url string, destPath string) error {
 	db := getDBHelper()
 	if db == nil {
@@ -184,13 +187,8 @@ func DeleteState(id string, url string, destPath string) error {
 		return fmt.Errorf("failed to delete state: %w", err)
 	}
 
-	// Tasks are deleted via CASCADE or we strictly rely on download_id
-	// Since we defined CASCADE in schema, it should be fine.
-	// But 'tasks' table has foreign key constraint, assuming SQLite FKs are enabled.
-	// We should probably ensure FKs are enabled or manually delete tasks.
-	// For safety, let's manually delete if we didn't use CASCADE in creation or forgot to enable FK.
-	// actually, let's just trust our schema but also execute a cleanup just deeply in case.
-	// (Implementation detail: FK support needs `PRAGMA foreign_keys = ON`)
+	// Tasks are deleted via CASCADE, but SQLite requires foreign keys enabled;
+	// the cleanup below keeps state consistent even if FK enforcement is off.
 
 	// Check rows affected
 	rows, _ := result.RowsAffected()
@@ -203,6 +201,7 @@ func DeleteState(id string, url string, destPath string) error {
 	return nil
 }
 
+// LoadMasterList returns all downloads (active, paused, completed) for history views.
 func LoadMasterList() (*types.MasterList, error) {
 	db := getDBHelper()
 	if db == nil {
@@ -264,6 +263,7 @@ func LoadMasterList() (*types.MasterList, error) {
 	return &list, nil
 }
 
+// AddToMasterList upserts a download record for history and duplicates checks.
 func AddToMasterList(entry types.DownloadEntry) error {
 	if entry.ID == "" {
 		if entry.URLHash != "" {
@@ -300,6 +300,7 @@ func AddToMasterList(entry types.DownloadEntry) error {
 	})
 }
 
+// RemoveFromMasterList deletes a download record from history.
 func RemoveFromMasterList(id string) error {
 	db := getDBHelper()
 	if db == nil {
@@ -319,6 +320,7 @@ func RemoveFromMasterList(id string) error {
 	return nil
 }
 
+// GetDownload returns a single download entry by ID.
 func GetDownload(id string) (*types.DownloadEntry, error) {
 
 	db := getDBHelper()
@@ -369,6 +371,7 @@ func GetDownload(id string) (*types.DownloadEntry, error) {
 	return &e, nil
 }
 
+// LoadPausedDownloads returns paused and queued entries for resume lists.
 func LoadPausedDownloads() ([]types.DownloadEntry, error) {
 	// Reuse LoadMasterList logic or optimize with WHERE
 	list, err := LoadMasterList()
@@ -385,6 +388,7 @@ func LoadPausedDownloads() ([]types.DownloadEntry, error) {
 	return paused, nil
 }
 
+// LoadCompletedDownloads returns completed entries for history views.
 func LoadCompletedDownloads() ([]types.DownloadEntry, error) {
 	list, err := LoadMasterList()
 	if err != nil {
@@ -400,6 +404,7 @@ func LoadCompletedDownloads() ([]types.DownloadEntry, error) {
 	return completed, nil
 }
 
+// CheckDownloadExists is used to prevent duplicates in the UI/CLI.
 func CheckDownloadExists(url string) (bool, error) {
 	db := getDBHelper()
 	if db == nil {
@@ -417,7 +422,7 @@ func CheckDownloadExists(url string) (bool, error) {
 	return count > 0, nil
 }
 
-
+// UpdateStatus updates a download status when transitions are driven externally.
 func UpdateStatus(id string, status string) error {
 	db := getDBHelper()
 	if db == nil {
@@ -441,6 +446,7 @@ func UpdateStatus(id string, status string) error {
 	return nil
 }
 
+// PauseAllDownloads marks all in-flight downloads as paused.
 func PauseAllDownloads() error {
 	db := getDBHelper()
 	if db == nil {
@@ -451,6 +457,7 @@ func PauseAllDownloads() error {
 	return err
 }
 
+// ResumeAllDownloads marks all paused downloads as queued for resume.
 func ResumeAllDownloads() error {
 	db := getDBHelper()
 	if db == nil {
@@ -461,6 +468,7 @@ func ResumeAllDownloads() error {
 	return err
 }
 
+// ListAllDownloads returns all persisted entries.
 func ListAllDownloads() ([]types.DownloadEntry, error) {
 	list, err := LoadMasterList()
 	if err != nil {
@@ -469,6 +477,7 @@ func ListAllDownloads() ([]types.DownloadEntry, error) {
 	return list.Downloads, nil
 }
 
+// RemoveCompletedDownloads purges completed entries for a clean history list.
 func RemoveCompletedDownloads() (int64, error) {
 	db := getDBHelper()
 	if db == nil {
@@ -488,7 +497,7 @@ func RemoveCompletedDownloads() (int64, error) {
 	return count, nil
 }
 
-// LoadStates loads multiple download states from SQLite in batch
+// LoadStates loads multiple download states from SQLite in batch to reduce IO.
 func LoadStates(ids []string) (map[string]*types.DownloadState, error) {
 	if len(ids) == 0 {
 		return make(map[string]*types.DownloadState), nil

@@ -8,13 +8,13 @@ import (
 	"github.com/gofrs/flock"
 )
 
-// InstanceLock wraps the file locking mechanism
+// InstanceLock wraps the file locking mechanism for single-instance enforcement.
 type InstanceLock struct {
 	flock *flock.Flock
 	path  string
 }
 
-// Global lock instance
+// Global lock instance.
 var instanceLock *InstanceLock
 
 // AcquireLock attempts to acquire the single instance lock.

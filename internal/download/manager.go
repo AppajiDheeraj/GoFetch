@@ -25,7 +25,7 @@ var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
 	"AppleWebKit/537.36 (KHTML, like Gecko) " +
 	"Chrome/120.0.0.0 Safari/537.36"
 
-// ProbeResult contains all metadata from server probe
+// ProbeResult contains metadata from the probe step used to select the download strategy.
 type ProbeResult struct {
 	FileSize      int64
 	SupportsRange bool
@@ -33,6 +33,8 @@ type ProbeResult struct {
 	ContentType   string
 }
 
+// uniqueFilePath picks a collision-free path while preserving the base name
+// so user expectations around filenames remain intact.
 func uniqueFilePath(path string) string {
 	// Check if file exists (both final and incomplete)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -41,12 +43,12 @@ func uniqueFilePath(path string) string {
 		}
 	}
 
-	// File exists, generate unique name
+	// File exists, generate unique name without clobbering in-progress partials.
 	dir := filepath.Dir(path)
 	ext := filepath.Ext(path)
 	name := strings.TrimSuffix(filepath.Base(path), ext)
 
-	// Check if name already has a counter like "file(1)"
+	// Check if name already has a counter like "file(1)" to continue the sequence.
 	base := name
 	counter := 1
 
@@ -76,11 +78,11 @@ func uniqueFilePath(path string) string {
 		}
 	}
 
-	// Fallback: just append a large random number or give up (original behavior essentially gave up or made ugly names)
-	// Here we fallback to original behavior of appending if the clean one failed 100 times
+	// Fallback: if we exhausted counters, preserve original behavior and let caller handle collision.
 	return path
 }
 
+// ensureFilenameExt keeps user-supplied names while borrowing extensions when missing.
 func ensureFilenameExt(filename string, probeFilename string) string {
 	if filepath.Ext(filename) != "" {
 		return filename
@@ -94,7 +96,7 @@ func ensureFilenameExt(filename string, probeFilename string) string {
 
 func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 
-	// Probe server once to get all metadata
+	// Probe once to decide strategy and gather canonical filename/size.
 	utils.Debug("CLIDownload: Probing server... %s", cfg.URL)
 	probeHint := cfg.Filename
 	if probeHint != "" && filepath.Ext(probeHint) == "" {
@@ -106,7 +108,7 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 		return err
 	}
 	utils.Debug("CLIDownload: Probe success, size=%d", probe.FileSize)
-	// Start download timer (exclude probing time)
+	// Start download timer (exclude probing time) for accurate throughput stats.
 	start := time.Now()
 	defer func() {
 		utils.Debug("Download %s completed in %v", cfg.URL, time.Since(start))
@@ -115,7 +117,7 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 	// Construct proper output path
 	destPath := cfg.OutputPath
 
-	// Auto-create output directory if it doesn't exist
+	// Auto-create output directory for CLI use where target is user-provided.
 	if _, err := os.Stat(cfg.OutputPath); os.IsNotExist(err) {
 		if mkErr := os.MkdirAll(cfg.OutputPath, 0755); mkErr != nil {
 			utils.Debug("Failed to create output directory: %v", mkErr)
@@ -130,13 +132,13 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 		destPath = filepath.Join(cfg.OutputPath, filename)
 	}
 
-	// Check if this is a resume (explicitly marked by TUI)
+	// Check if this is a resume (explicitly marked by TUI) to reuse state.
 	var savedState *types.DownloadState
 	if cfg.IsResume && cfg.DestPath != "" {
 		// Resume: use the provided destination path for state lookup
 		savedState, _ = state.LoadState(cfg.URL, cfg.DestPath)
 
-		// Restore mirrors from state if found
+		// Restore mirrors from state so resume uses the same mirror set.
 		if savedState != nil && len(savedState.Mirrors) > 0 {
 			// Create map of existing mirrors to avoid duplicates
 			existing := make(map[string]bool)
@@ -188,13 +190,13 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 		cfg.State.SetTotalSize(probe.FileSize)
 	}
 
-	// Choose downloader based on probe results
+	// Choose downloader based on probe results and runtime overrides.
 	var downloadErr error
 	forceSingle := cfg.Runtime != nil && cfg.Runtime.ForceSingle
 	if !forceSingle && probe.SupportsRange && probe.FileSize > 0 {
 		utils.Debug("Using concurrent downloader")
 
-		// We probe all candidate mirrors (cfg.Mirrors) to filter out invalid ones
+		// Probe mirrors to filter invalid hosts before we schedule workers.
 		var activeMirrors []string
 		if len(cfg.Mirrors) > 0 {
 			utils.Debug("Probing %d mirrors", len(cfg.Mirrors))
@@ -227,8 +229,8 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 		downloadErr = d.Download(ctx, cfg.URL, destPath, probe.FileSize, probe.Filename, cfg.Verbose)
 	}
 
-	// Only send completion if NO error AND not paused
-	// Check specifically for ErrPaused to avoid treating it as error
+	// Only send completion if NO error AND not paused.
+	// Check specifically for ErrPaused to avoid treating it as error.
 	if errors.Is(downloadErr, types.ErrPaused) {
 		utils.Debug("Download paused cleanly")
 		return nil // Return nil so worker can remove it from active map
@@ -237,12 +239,12 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 	isPaused := cfg.State != nil && cfg.State.IsPaused()
 	if downloadErr == nil && !isPaused {
 		elapsed := time.Since(start)
-		// For resumed downloads, add previously saved elapsed time
+		// For resumed downloads, add previously saved elapsed time to avoid skew.
 		if cfg.State != nil && cfg.State.SavedElapsed > 0 {
 			elapsed += cfg.State.SavedElapsed
 		}
 
-		// Persist to history before sending event
+		// Persist to history before sending event so UI queries are consistent.
 		if err := state.AddToMasterList(types.DownloadEntry{
 			ID:          cfg.ID,
 			URL:         cfg.URL,

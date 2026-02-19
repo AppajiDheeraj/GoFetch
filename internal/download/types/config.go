@@ -50,7 +50,8 @@ const (
 	ProgressChannelBuffer = 100
 )
 
-// DownloadConfig contains all parameters needed to start a download
+// DownloadConfig contains all parameters needed to start a download.
+// It is passed across layers so worker and UI state stay aligned.
 type DownloadConfig struct {
 	URL        string
 	OutputPath string

@@ -21,6 +21,7 @@ var (
 )
 
 func ConfigureDebug(dir string) {
+	// Store logs directory for later lazy initialization.
 	logsDir.Store(dir)
 }
 
@@ -40,6 +41,7 @@ func Debug(format string, args ...any) {
 	}
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	debugOnce.Do(func() {
+		// Create log file only when verbose logging is first used.
 		logsDir := config.GetLogsDir()
 		os.MkdirAll(logsDir, 0755)
 		debugFile, _ = os.Create(filepath.Join(logsDir, fmt.Sprintf("debug-%s.log", time.Now().Format("20060102-150405"))))
@@ -49,7 +51,7 @@ func Debug(format string, args ...any) {
 	}
 }
 
-// CleanupLogs removes old log files, keeping only the most recent retentionCount files
+// CleanupLogs removes old log files, keeping only the most recent retentionCount files.
 func CleanupLogs(retentionCount int) {
 	if retentionCount < 0 {
 		return // Keep all logs

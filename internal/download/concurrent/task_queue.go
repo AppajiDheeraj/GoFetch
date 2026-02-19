@@ -51,6 +51,7 @@ func (q *TaskQueue) Pop() (types.Task, bool) {
 
 	t := q.tasks[q.head]
 	q.head++
+	// Compact the slice occasionally to keep memory bounded on long runs.
 	if q.head > len(q.tasks)/2 {
 		q.tasks = append([]types.Task(nil), q.tasks[q.head:]...)
 		q.head = 0

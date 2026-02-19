@@ -2,7 +2,8 @@ package gofetch
 
 import "concurrent_downloader/internal/events"
 
-// Re-exported event types for consumers.
+// Re-exported event types so consumers can depend on stable names even if
+// internal event wiring changes.
 type ProgressMsg = events.ProgressMsg
 type BatchProgressMsg = events.BatchProgressMsg
 type DownloadStartedMsg = events.DownloadStartedMsg

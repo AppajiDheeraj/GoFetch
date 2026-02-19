@@ -11,13 +11,14 @@ import (
 )
 
 var (
-	db *sql.DB
-	dbMu sync.Mutex
-	dbPath string
+	db         *sql.DB
+	dbMu       sync.Mutex
+	dbPath     string
 	configured bool
 )
 
-// Configure sets the path for the SQLite database
+// Configure sets the path for the SQLite database.
+// Callers must do this before any state operations so the DB is process-wide.
 func Configure(path string) {
 	dbMu.Lock()
 	defer dbMu.Unlock()
@@ -25,6 +26,8 @@ func Configure(path string) {
 	configured = true
 }
 
+// initDB opens the SQLite database and ensures schema exists.
+// It is safe to call multiple times.
 func initDB() error {
 	dbMu.Lock()
 	defer dbMu.Unlock()
@@ -35,8 +38,8 @@ func initDB() error {
 
 	if !configured || dbPath == "" {
 		if !configured || dbPath == "" {
-    return fmt.Errorf("state database not configured: call state.Configure() first")
-}
+			return fmt.Errorf("state database not configured: call state.Configure() first")
+		}
 
 	}
 
@@ -81,6 +84,7 @@ func initDB() error {
 	return nil
 }
 
+// CloseDB closes the database to release file handles on shutdown.
 func CloseDB() {
 	dbMu.Lock()
 	defer dbMu.Unlock()
@@ -90,6 +94,7 @@ func CloseDB() {
 	}
 }
 
+// GetDB returns a lazily initialized DB handle.
 func GetDB() (*sql.DB, error) {
 	if db == nil {
 		if err := initDB(); err != nil {
@@ -108,6 +113,7 @@ func getDBHelper() *sql.DB {
 	return d
 }
 
+// withTx wraps a unit of work in a transaction and handles rollback/commit.
 func withTx(fn func(*sql.Tx) error) error {
 	d := getDBHelper()
 	if d == nil {

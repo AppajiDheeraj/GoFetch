@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// ProgressMsg represents a progress update from the downloader
+// ProgressMsg represents a progress update from the downloader.
 type ProgressMsg struct {
 	DownloadID        string
 	Downloaded        int64
@@ -13,7 +13,7 @@ type ProgressMsg struct {
 	ActiveConnections int
 }
 
-// DownloadCompleteMsg signals that the download finished successfully
+// DownloadCompleteMsg signals that the download finished successfully.
 type DownloadCompleteMsg struct {
 	DownloadID string
 	Filename   string
@@ -21,13 +21,13 @@ type DownloadCompleteMsg struct {
 	Total      int64
 }
 
-// DownloadErrorMsg signals that an error occurred
+// DownloadErrorMsg signals that an error occurred.
 type DownloadErrorMsg struct {
 	DownloadID string
 	Err        error
 }
 
-// DownloadStartedMsg is sent when a download actually starts (after metadata fetch)
+// DownloadStartedMsg is sent when a download actually starts (after metadata fetch).
 type DownloadStartedMsg struct {
 	DownloadID string
 	URL        string

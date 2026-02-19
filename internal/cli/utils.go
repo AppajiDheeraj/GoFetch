@@ -16,7 +16,7 @@ import (
 	"concurrent_downloader/internal/state"
 )
 
-// readActivePort reads the port from the port file
+// readActivePort reads the port from the port file written by the daemon.
 func readActivePort() int {
 	portFile := filepath.Join(config.GetRuntimeDir(), "port")
 	data, err := os.ReadFile(portFile)
@@ -28,7 +28,7 @@ func readActivePort() int {
 	return port
 }
 
-// readURLsFromFile reads URLs from a file, one per line
+// readURLsFromFile reads URLs from a file, one per line.
 func readURLsFromFile(filepath string) ([]string, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -47,8 +47,8 @@ func readURLsFromFile(filepath string) ([]string, error) {
 	return urls, scanner.Err()
 }
 
-// ParseURLArg parses a command line argument that might contain comma-separated mirrors
-// Returns the primary URL and a list of all mirrors (including the primary)
+// ParseURLArg parses a command line argument that might contain comma-separated mirrors.
+// Returns the primary URL and a list of all mirrors (including the primary).
 func ParseURLArg(arg string) (string, []string) {
 	parts := strings.Split(arg, ",")
 	var urls []string
@@ -64,6 +64,7 @@ func ParseURLArg(arg string) (string, []string) {
 }
 
 func sendToServer(url string, mirrors []string, outPath string, filename string, forceSingle bool, port int) error {
+	// Keep payload minimal; server applies defaults and validation.
 	reqBody := DownloadRequest{
 		URL:         url,
 		Filename:    filename,
@@ -88,10 +89,7 @@ func sendToServer(url string, mirrors []string, outPath string, filename string,
 		return fmt.Errorf("server error: %s - %s", resp.Status, string(body))
 	}
 
-	// Optional: Print response info (ID etc) if needed, but usually caller handles success msg
-	// Or we can parse ID here and return it?
-	// The caller (add.go/root.go) might want to know ID.
-	// For now, keep it simple as error/nil.
+	// Response parsing is intentionally optional to keep CLI fast-path lightweight.
 
 	var respData map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&respData) // Ignore error? safely
@@ -129,7 +127,7 @@ func resolveDownloadID(partialID string) (string, error) {
 
 	var candidates []string
 
-	// 1. Try to get candidates from running server
+	// 1. Try to get candidates from running server for live IDs.
 	port := readActivePort()
 	if port > 0 {
 		remoteDownloads, err := GetRemoteDownloads(port)
@@ -140,7 +138,7 @@ func resolveDownloadID(partialID string) (string, error) {
 		}
 	}
 
-	// 2. Get all downloads from database
+	// 2. Get all downloads from database.
 	downloads, err := state.ListAllDownloads()
 	if err == nil {
 		for _, d := range downloads {
@@ -151,7 +149,7 @@ func resolveDownloadID(partialID string) (string, error) {
 		return partialID, nil
 	}
 
-	// Find matches among all candidates
+	// Find matches among all candidates.
 	var matches []string
 	seen := make(map[string]bool)
 

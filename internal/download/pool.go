@@ -24,7 +24,7 @@ type WorkerPool struct {
 	downloads    map[string]*activeDownload      // Track active downloads for pause/resume
 	queued       map[string]types.DownloadConfig // Track queued downloads
 	mu           sync.RWMutex
-	wg           sync.WaitGroup // We use this to wait for all active downloads to pause before exiting the program
+	wg           sync.WaitGroup // Ensures workers exit before shutdown completes
 	maxDownloads int
 }
 
@@ -33,7 +33,7 @@ func NewWorkerPool(progressCh chan<- any, maxDownloads int) *WorkerPool {
 		maxDownloads = 3 // Default to 3 if invalid
 	}
 	pool := &WorkerPool{
-		taskChan:     make(chan types.DownloadConfig, 100), // We make it buffered to avoid blocking add
+		taskChan:     make(chan types.DownloadConfig, 100), // Buffered to avoid UI/CLI blocking on Add
 		progressCh:   progressCh,
 		downloads:    make(map[string]*activeDownload),
 		queued:       make(map[string]types.DownloadConfig),
@@ -73,8 +73,8 @@ func (p *WorkerPool) HasDownload(url string) bool {
 	}
 	p.mu.RUnlock()
 
-	// Check persistent store (completed/queued/paused)
-	// We do this outside the lock to avoid holding it during DB query
+	// Check persistent store (completed/queued/paused).
+	// Do this outside the lock to avoid holding it during DB query.
 	exists, err := state.CheckDownloadExists(url)
 	if err == nil && exists {
 		return true
@@ -143,7 +143,7 @@ func (p *WorkerPool) Pause(downloadID string) bool {
 
 	// Set paused flag and cancel context
 	if ad.config.State != nil {
-		// Idempotency: If already pausing or paused, do nothing
+		// Idempotency: If already pausing or paused, do nothing.
 		if ad.config.State.IsPausing() || ad.config.State.IsPaused() {
 			return true
 		}
@@ -231,25 +231,25 @@ func (p *WorkerPool) Resume(downloadID string) bool {
 		return false
 	}
 
-	// Prevent race: Don't resume if still pausing
+	// Prevent race: Don't resume if still pausing.
 	if ad.config.State != nil && ad.config.State.IsPausing() {
 		utils.Debug("Resume ignored: download %s is still pausing", downloadID)
 		return false
 	}
 
-	// Idempotency: If already running (not paused), do nothing
+	// Idempotency: If already running (not paused), do nothing.
 	if ad.config.State != nil && !ad.config.State.IsPaused() {
 		utils.Debug("Resume ignored: download %s is already running", downloadID)
 		return true
 	}
 
-	// Clear paused flag and reset session start to avoid speed spikes/dips checks
+	// Clear paused flag and reset session start to avoid speed spikes.
 	if ad.config.State != nil {
 		ad.config.State.Resume()
 		ad.config.State.SyncSessionStart()
 
 		// Hot-resume needs the resolved path from the first run, otherwise
-		// TUIDownload cannot load persisted state and may start a fresh file.
+		// the downloader may start a fresh file instead of resuming.
 		if destPath := ad.config.State.GetDestPath(); destPath != "" {
 			ad.config.DestPath = destPath
 		}
@@ -291,12 +291,12 @@ func (p *WorkerPool) worker() {
 		err := CLIDownload(ctx, &ad.config)
 
 		// Logic:
-		// 1. If Pause() was called: State.IsPaused() is true. We keep the task in p.downloads (so it can be resumed).
-		// 2. If finished/error: We remove from p.downloads.
+		// 1. If Pause() was called: State.IsPaused() is true. Keep task for resume.
+		// 2. If finished/error: remove from active tracking.
 
 		isPaused := ad.config.State != nil && ad.config.State.IsPaused()
 
-		// Clear "Pausing" transition state now that worker has exited
+		// Clear "Pausing" transition state now that worker has exited.
 		if ad.config.State != nil {
 			ad.config.State.SetPausing(false)
 		}
@@ -315,7 +315,7 @@ func (p *WorkerPool) worker() {
 					Err:        err,
 				}
 			}
-			// Clean up errored download from tracking (don't save to .GoFetch)
+			// Clean up errored download from tracking (don't save to .GoFetch).
 			p.mu.Lock()
 			delete(p.downloads, cfg.ID)
 			p.mu.Unlock()
@@ -325,7 +325,7 @@ func (p *WorkerPool) worker() {
 			if cfg.State != nil {
 				cfg.State.Done.Store(true)
 			}
-			// Note: DownloadCompleteMsg is sent by the progress reporter when it detects Done=true
+			// Note: DownloadCompleteMsg is sent by the progress reporter when it detects Done=true.
 
 			// Clean up from tracking
 			p.mu.Lock()
@@ -412,13 +412,13 @@ func (p *WorkerPool) GetStatus(id string) *types.DownloadStatus {
 	return status
 }
 
-// GracefulShutdown pauses all downloads and waits for them to save state
+// GracefulShutdown pauses all downloads and waits for them to save state.
 func (p *WorkerPool) GracefulShutdown() {
 	// ... existing implementation
 	p.PauseAll()
 
-	// Wait for any downloads in "Pausing" state to finish transitioning
-	// This ensures we don't exit while a database write is pending/active
+	// Wait for any downloads in "Pausing" state to finish transitioning.
+	// This avoids exiting while a database write is pending.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

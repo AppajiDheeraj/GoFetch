@@ -23,13 +23,13 @@ var addCmd = &cobra.Command{
 		filename, _ := cmd.Flags().GetString("filename")
 		forceSingle, _ := cmd.Flags().GetBool("force-single")
 
-		// Collect URLs
+		// Collect URLs from multiple sources to keep CLI UX simple.
 		var urls []string
 
-		// 1. URLs from args
+		// 1. URLs from args.
 		urls = append(urls, args...)
 
-		// 2. URLs from clipboard
+		// 2. URLs from clipboard.
 		if clipboardFlag {
 			url, err := clipboard.ReadURL()
 			if err != nil {
@@ -44,7 +44,7 @@ var addCmd = &cobra.Command{
 			fmt.Printf("📋 URL from clipboard: %s\n", url)
 		}
 
-		// 3. URLs from batch file
+		// 3. URLs from batch file.
 		if batchFile != "" {
 			fileUrls, err := readURLsFromFile(batchFile)
 			if err != nil {
@@ -64,7 +64,7 @@ var addCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Check if GoFetch is running
+		// Check if GoFetch is running to decide local vs remote add.
 		port := readActivePort()
 		if port == 0 {
 			fmt.Println("Error: GoFetch is not running.")

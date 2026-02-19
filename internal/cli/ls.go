@@ -34,7 +34,7 @@ var lsCmd = &cobra.Command{
 
 		if watch {
 			for {
-				// Clear screen first for watch mode
+				// Clear screen first for watch mode.
 				fmt.Print("\033[H\033[2J")
 				printDownloads(jsonOutput)
 				time.Sleep(1 * time.Second)
@@ -60,7 +60,7 @@ type downloadInfo struct {
 func printDownloads(jsonOutput bool) {
 	var downloads []downloadInfo
 
-	// Try to get from running server first
+	// Try to get from running server first for live status.
 	port := readActivePort()
 	if port > 0 {
 		serverDownloads, err := GetRemoteDownloads(port)
@@ -79,7 +79,7 @@ func printDownloads(jsonOutput bool) {
 		}
 	}
 
-	// If no server running or no active downloads, fall back to database
+	// If no server running or no active downloads, fall back to database.
 	if len(downloads) == 0 {
 		dbDownloads, err := state.ListAllDownloads()
 		if err != nil {

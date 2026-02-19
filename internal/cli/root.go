@@ -27,7 +27,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version information - set via ldflags during build
+// Version information - set via ldflags during build.
 var (
 	Version   = "dev"
 	BuildTime = "unknown"
@@ -46,7 +46,7 @@ var (
 	GlobalService    core.DownloadService
 )
 
-// rootCmd represents the base command when called without any subcommands
+// rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
 	Use:     "GoFetch [url]...",
 	Short:   "An open-source download manager written in Go",
@@ -56,11 +56,10 @@ var rootCmd = &cobra.Command{
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		utils.SetVerbose(verbose)
 
-		// Initialize Global Progress Channel
+		// Initialize Global Progress Channel.
 		GlobalProgressCh = make(chan any, 100)
 
-		// Initialize Global Worker Pool
-		// Load max downloads from settings
+		// Initialize Global Worker Pool using settings for concurrency limits.
 		settings, err := config.LoadSettings()
 		if err != nil {
 			settings = config.DefaultSettings()
@@ -70,7 +69,7 @@ var rootCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		initializeGlobalState()
 
-		// Check for clipboard flag
+		// Check for clipboard flag to append a URL without manual paste.
 		clipboardFlag, _ := cmd.Flags().GetBool("clipboard")
 		if clipboardFlag {
 			url, err := clipboard.ReadURL()
@@ -86,15 +85,15 @@ var rootCmd = &cobra.Command{
 			fmt.Printf("URL from clipboard: %s\n", url)
 		}
 
-		// Validate integrity of paused downloads before resuming
-		// Removes entries whose .GoFetch files are missing or tampered with
+		// Validate integrity of paused downloads before resuming.
+		// Removes entries whose .GoFetch files are missing or tampered with.
 		if removed, err := state.ValidateIntegrity(); err != nil {
 			utils.Debug("Integrity check failed: %v", err)
 		} else if removed > 0 {
 			utils.Debug("Integrity check: removed %d corrupted/orphaned downloads", removed)
 		}
 
-		// Attempt to acquire lock
+		// Attempt to acquire lock to enforce single-instance server semantics.
 		isMaster, err := AcquireLock()
 		if err != nil {
 			fmt.Printf("Error acquiring lock: %v\n", err)
@@ -112,7 +111,7 @@ var rootCmd = &cobra.Command{
 			}
 		}()
 
-		// Initialize Service
+		// Initialize Service.
 		GlobalService = core.NewLocalDownloadServiceWithInput(GlobalPool, GlobalProgressCh)
 
 		portFlag, _ := cmd.Flags().GetInt("port")
@@ -129,14 +128,14 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Save port for browser extension AND CLI discovery
+		// Save port for browser extension AND CLI discovery.
 		saveActivePort(port)
 		defer removeActivePort()
 
-		// Start HTTP server in background (reuse the listener)
+		// Start HTTP server in background (reuse the listener).
 		go startHTTPServer(listener, port, outputDir, GlobalService)
 
-		// Queue initial downloads if any
+		// Queue initial downloads if any.
 		go func() {
 			var urls []string
 			urls = append(urls, args...)
@@ -159,23 +158,24 @@ var rootCmd = &cobra.Command{
 			}
 		}()
 
-		// Start CLI mode (headless)
+		// Start CLI mode (headless).
 		startCLI(exitWhenDone, noResume)
 	},
 }
 
+// startCLI runs the headless loop and handles shutdown signals.
 func startCLI(exitWhenDone bool, noResume bool) {
-	// Start headless event consumer for CLI output
+	// Start headless event consumer for CLI output.
 	StartHeadlessConsumer()
 
-	// Auto-resume paused downloads if enabled
+	// Auto-resume paused downloads if enabled.
 	if !noResume {
 		resumePausedDownloads()
 	}
 
 	fmt.Println("GoFetch is running. Press Ctrl+C to exit.")
 
-	// Exit-when-done checker for CLI mode
+	// Exit-when-done checker for CLI mode.
 	if exitWhenDone {
 		go func() {
 			// Wait a bit for initial downloads to be queued
@@ -192,7 +192,7 @@ func startCLI(exitWhenDone bool, noResume bool) {
 		}()
 	}
 
-	// Signal handler
+	// Signal handler for graceful shutdown.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigChan)
@@ -208,6 +208,7 @@ func getServerBindHost() string {
 }
 
 func StartHeadlessConsumer() {
+	// Headless consumer keeps CLI output responsive without blocking downloads.
 	go func() {
 		if GlobalService == nil {
 			return
@@ -271,6 +272,7 @@ func StartHeadlessConsumer() {
 }
 
 // findAvailablePort tries ports starting from 'start' until one is available
+// findAvailablePort scans for a free TCP port starting at the given base.
 func findAvailablePort(start int) (int, net.Listener) {
 	bindHost := getServerBindHost()
 	for port := start; port < start+100; port++ {
@@ -282,6 +284,7 @@ func findAvailablePort(start int) (int, net.Listener) {
 	return 0, nil
 }
 
+// bindServerListener resolves the port selection policy and returns a listener.
 func bindServerListener(portFlag int) (int, net.Listener, error) {
 	bindHost := getServerBindHost()
 	if portFlag > 0 {
@@ -298,7 +301,7 @@ func bindServerListener(portFlag int) (int, net.Listener, error) {
 	return port, ln, nil
 }
 
-// saveActivePort writes the active port to ~/.GoFetch/port for extension discovery
+// saveActivePort writes the active port to ~/.GoFetch/port for extension discovery.
 func saveActivePort(port int) {
 	portFile := filepath.Join(config.GetRuntimeDir(), "port")
 	if err := os.WriteFile(portFile, []byte(fmt.Sprintf("%d", port)), 0o644); err != nil {
@@ -307,7 +310,7 @@ func saveActivePort(port int) {
 	utils.Debug("HTTP server listening on port %d", port)
 }
 
-// removeActivePort cleans up the port file on exit
+// removeActivePort cleans up the port file on exit.
 func removeActivePort() {
 	portFile := filepath.Join(config.GetRuntimeDir(), "port")
 	if err := os.Remove(portFile); err != nil && !os.IsNotExist(err) {
@@ -315,6 +318,7 @@ func removeActivePort() {
 	}
 }
 
+// startHTTPServer starts the local control plane used by the browser extension and CLI.
 func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service core.DownloadService) {
 	authToken := ensureAuthToken()
 
@@ -331,15 +335,15 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 	})
 
-	// SSE Events Endpoint (Protected)
+	// SSE Events Endpoint (Protected).
 	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-		// Set headers for SSE
+		// Set headers for SSE.
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		// Get event stream
+		// Get event stream.
 		stream, cleanup, err := service.StreamEvents(r.Context())
 		if err != nil {
 			http.Error(w, "Failed to subscribe to events", http.StatusInternalServerError)
@@ -347,7 +351,7 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 		defer cleanup()
 
-		// Flush headers immediately
+		// Flush headers immediately so the client knows the stream is live.
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
@@ -355,8 +359,8 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 		flusher.Flush()
 
-		// Send events
-		// Create a closer notifier
+		// Send events.
+		// Create a closer notifier.
 		done := r.Context().Done()
 
 		for {
@@ -368,15 +372,14 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 					return
 				}
 
-				// Encode message to JSON
+				// Encode message to JSON.
 				data, err := json.Marshal(msg)
 				if err != nil {
 					utils.Debug("Error marshaling event: %v", err)
 					continue
 				}
 
-				// Determine event type name based on struct
-				// Events are in internal/engine/events package
+				// Determine event type name based on struct.
 				eventType := "unknown"
 				switch msg := msg.(type) {
 				case events.DownloadStartedMsg:
@@ -419,12 +422,12 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 	})
 
-	// Download endpoint (Protected + Public for simple GET status if needed? No, let's protect all for now)
+	// Download endpoint (Protected).
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		handleDownload(w, r, defaultOutputDir, service)
 	})
 
-	// Pause endpoint (Protected)
+	// Pause endpoint (Protected).
 	mux.HandleFunc("/pause", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -447,7 +450,7 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 	})
 
-	// Resume endpoint (Protected)
+	// Resume endpoint (Protected).
 	mux.HandleFunc("/resume", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -470,7 +473,7 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 	})
 
-	// Delete endpoint (Protected)
+	// Delete endpoint (Protected).
 	mux.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete && r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -493,7 +496,7 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 	})
 
-	// List endpoint (Protected)
+	// List endpoint (Protected).
 	mux.HandleFunc("/list", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -512,7 +515,7 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 	})
 
-	// History endpoint (Protected)
+	// History endpoint (Protected).
 	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -531,7 +534,7 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 		}
 	})
 
-	// Wrap mux with Auth and CORS (CORS outermost to ensure 401/403 include headers)
+	// Wrap mux with Auth and CORS (CORS outermost to ensure 401/403 include headers).
 	handler := corsMiddleware(authMiddleware(authToken, mux))
 
 	server := &http.Server{Handler: handler}
@@ -540,6 +543,7 @@ func startHTTPServer(ln net.Listener, port int, defaultOutputDir string, service
 	}
 }
 
+// corsMiddleware keeps extension and local tools unblocked across origins.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers
@@ -548,7 +552,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Access-Control-Allow-Private-Network")
 		w.Header().Set("Access-Control-Allow-Private-Network", "true")
 
-		// Handle preflight requests
+		// Handle preflight requests.
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -558,21 +562,22 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// authMiddleware protects control endpoints with a shared bearer token.
 func authMiddleware(token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow health check without auth
+		// Allow health check without auth.
 		if r.URL.Path == "/health" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Allow OPTIONS for CORS preflight
+		// Allow OPTIONS for CORS preflight.
 		if r.Method == "OPTIONS" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Check for Authorization header
+		// Check for Authorization header.
 		authHeader := r.Header.Get("Authorization")
 		if authHeader != "" {
 			if strings.HasPrefix(authHeader, "Bearer ") {
@@ -588,6 +593,7 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 	})
 }
 
+// ensureAuthToken loads or generates the daemon auth token.
 func ensureAuthToken() string {
 	tokenFile := filepath.Join(config.GetStateDir(), "token")
 	data, err := os.ReadFile(tokenFile)
@@ -619,6 +625,7 @@ type DownloadRequest struct {
 	ForceSingle          bool              `json:"force_single,omitempty"`
 }
 
+// handleDownload implements both GET status lookup and POST enqueue.
 func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir string, service core.DownloadService) {
 	// GET request to query status
 	if r.Method == http.MethodGet {
@@ -652,7 +659,7 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 		return
 	}
 
-	// Load settings once for use throughout the function
+	// Load settings once for use throughout the function.
 	settings, err := config.LoadSettings()
 	if err != nil {
 		// Fallback to defaults if loading fails (though LoadSettings handles missing file)
@@ -675,6 +682,7 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 		return
 	}
 
+	// Prevent directory traversal through API payloads.
 	if strings.Contains(req.Path, "..") || strings.Contains(req.Filename, "..") {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
@@ -691,7 +699,7 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 		return
 	}
 
-	// Prepare output path
+	// Prepare output path with consistent absolute form for resume stability.
 	outPath := req.Path
 	if req.RelativeToDefaultDir && req.Path != "" {
 		// Resolve relative to default download directory
@@ -728,11 +736,11 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 		}
 	}
 
-	// Enforce absolute path to ensure resume works even if CWD changes
+	// Enforce absolute path to ensure resume works even if CWD changes.
 	outPath = utils.EnsureAbsPath(outPath)
 
-	// Check settings for extension prompt and duplicates
-	// Logic modified to distinguish between ACTIVE (corruption risk) and COMPLETED (overwrite safe)
+	// Check settings for extension prompt and duplicates.
+	// Distinguish ACTIVE (corruption risk) and COMPLETED (overwrite safe).
 	isDuplicate := false
 	isActive := false
 
@@ -758,8 +766,7 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 
 	utils.Debug("Download request: URL=%s, SkipApproval=%v, isDuplicate=%v, isActive=%v", urlForAdd, req.SkipApproval, isDuplicate, isActive)
 
-	// EXTENSION VETTING SHORTCUT:
-	// If SkipApproval is true, we trust the extension completely.
+	// Extension vetting shortcut: when SkipApproval is true, trust the extension.
 	// The backend will auto-rename duplicate files, so no need to reject.
 	if req.SkipApproval {
 		// Trust extension -> Skip all prompting logic, proceed to download
@@ -780,7 +787,7 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 		}
 	}
 
-	// Add via service
+	// Add via service.
 	var opts *types.AddOptions
 	if req.ForceSingle {
 		opts = &types.AddOptions{ForceSingle: true}
@@ -791,7 +798,7 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 		return
 	}
 
-	// Increment active downloads counter
+	// Increment active downloads counter.
 	atomic.AddInt32(&activeDownloads, 1)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -804,12 +811,12 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 	}
 }
 
-// processDownloads handles the logic of adding downloads either to local pool or remote server
-// Returns the number of successfully added downloads
+// processDownloads handles the logic of adding downloads either to local pool or remote server.
+// Returns the number of successfully added downloads.
 func processDownloads(urls []string, outputDir string, filename string, forceSingle bool, port int) int {
 	successCount := 0
 
-	// If port > 0, we are sending to a remote server
+	// If port > 0, send to a remote server.
 	if port > 0 {
 		for _, arg := range urls {
 			url, mirrors := ParseURLArg(arg)
@@ -826,7 +833,7 @@ func processDownloads(urls []string, outputDir string, filename string, forceSin
 		return successCount
 	}
 
-	// Internal add (TUI or Headless mode)
+	// Internal add (TUI or headless mode).
 	if GlobalService == nil {
 		fmt.Fprintln(os.Stderr, "Error: GlobalService not initialized")
 		return 0
@@ -848,7 +855,7 @@ func processDownloads(urls []string, outputDir string, filename string, forceSin
 			continue
 		}
 
-		// Prepare output path
+		// Prepare output path.
 		outPath := outputDir
 		if outPath == "" {
 			if settings.General.DefaultDownloadDir != "" {
@@ -903,6 +910,7 @@ func init() {
 	rootCmd.SetVersionTemplate("GoFetch v{{.Version}}\n")
 }
 
+// initializeGlobalState prepares directories, DB, and logging for CLI usage.
 func initializeGlobalState() {
 
 	stateDir := config.GetStateDir()
@@ -929,6 +937,7 @@ func initializeGlobalState() {
 	utils.CleanupLogs(retention)
 }
 
+// resumePausedDownloads honors settings to auto-resume saved downloads.
 func resumePausedDownloads() {
 	settings, err := config.LoadSettings()
 	if err != nil {

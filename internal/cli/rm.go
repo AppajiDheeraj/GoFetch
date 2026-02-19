@@ -67,7 +67,7 @@ var rmCmd = &cobra.Command{
 			}
 			fmt.Printf("Removed download %s\n", id[:8])
 		} else {
-			// Offline mode: remove from DB
+			// Offline mode: remove from DB so history stays consistent.
 			if err := state.RemoveFromMasterList(id); err != nil {
 				fmt.Fprintf(os.Stderr, "Error removing download: %v\n", err)
 				os.Exit(1)

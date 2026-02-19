@@ -21,7 +21,7 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 	utils.Debug("Worker %d started", id)
 	defer utils.Debug("Worker %d finished", id)
 
-	// Initial mirror assignment: Round Robin based on ID
+	// Initial mirror assignment: round-robin to spread load.
 	currentMirrorIdx := id % len(mirrors)
 
 	for {
@@ -46,8 +46,8 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 					time.Sleep(time.Duration(1<<attempt) * types.RetryBaseDelay) // Exponential backoff incase of failure
 				}
 
-				// FAILOVER: Switch mirror on retry
-				// Report error for the previous mirror
+				// Fail over to another mirror on retry to avoid a bad host.
+				// Report error for the previous mirror.
 				d.ReportMirrorError(mirrors[currentMirrorIdx])
 
 				currentMirrorIdx = (currentMirrorIdx + 1) % len(mirrors)
@@ -57,7 +57,7 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 			// Use current mirror
 			currentURL := mirrors[currentMirrorIdx]
 
-			// Register active task with per-task cancellable context
+			// Register active task with per-task cancellable context.
 			taskCtx, taskCancel := context.WithCancel(ctx)
 			now := time.Now()
 			activeTask := &ActiveTask{
@@ -73,7 +73,7 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 			d.activeTasks[id] = activeTask
 			d.activeMu.Unlock()
 
-			// Update chunk status to Downloading
+			// Update chunk status to Downloading for UI visualization.
 			if d.State != nil {
 				utils.Debug("Worker %d: Setting range %d-%d to Downloading", id, task.Offset, task.Offset+task.Length)
 				d.State.UpdateChunkStatus(task.Offset, task.Length, types.ChunkDownloading)
@@ -84,8 +84,8 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 			taskStart := time.Now()
 			lastErr = d.downloadTask(taskCtx, currentURL, file, activeTask, buf, client, totalSize)
 
-			// CRITICAL: Capture external cancellation state BEFORE calling taskCancel()
-			// If we call taskCancel() first, taskCtx.Err() will always be non-nil
+			// Capture external cancellation BEFORE calling taskCancel();
+			// otherwise taskCtx.Err() will always be non-nil.
 			wasExternallyCancelled := taskCtx.Err() != nil
 
 			taskCancel() // Clean up context resources
@@ -101,12 +101,11 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 				return ctx.Err()
 			}
 
-			// Check if TASK context was cancelled by Health Monitor (not by us calling taskCancel)
-			// but parent context is still fine
+			// Check if TASK context was cancelled by health monitor while parent is still alive.
 			if wasExternallyCancelled && lastErr != nil {
 				// Health monitor cancelled this task - re-queue REMAINING work only
 
-				// Force rotation to next mirror to avoid getting stuck on the slow one
+				// Force rotation to next mirror to avoid getting stuck on the slow one.
 				currentMirrorIdx = (currentMirrorIdx + 1) % len(mirrors)
 				utils.Debug("Worker %d: Health check cancelled task, rotating from mirror %s to %s", id, mirrors[(currentMirrorIdx+len(mirrors)-1)%len(mirrors)], mirrors[currentMirrorIdx])
 
@@ -122,7 +121,7 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 							id, remaining.Length, remaining.Offset)
 					}
 				}
-				// Delete from active tasks and move to next task (don't retry from scratch)
+				// Delete from active tasks and move to next task (don't retry from scratch).
 				d.activeMu.Lock()
 				delete(d.activeTasks, id)
 				d.activeMu.Unlock()
@@ -131,7 +130,7 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 				break // Exit retry loop, get next task
 			}
 
-			// Only delete from activeTasks on normal completion (not cancelled)
+			// Only delete from activeTasks on normal completion (not cancelled).
 			d.activeMu.Lock()
 			delete(d.activeTasks, id)
 			d.activeMu.Unlock()
@@ -148,23 +147,21 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 				break
 			}
 
-			// Resume-on-retry: update task to reflect remaining work
-			// This prevents double-counting bytes on retry
+			// Resume-on-retry: update task to reflect remaining work.
+			// This prevents double-counting bytes on retry.
 			current := atomic.LoadInt64(&activeTask.CurrentOffset)
 			if current > task.Offset {
 				task = types.Task{Offset: current, Length: task.Offset + task.Length - current}
 			}
 		}
 
-		// Update active workers
+		// Update active workers.
 		if d.State != nil {
 			d.State.ActiveWorkers.Add(-1)
 		}
 
 		if lastErr != nil {
-			// Log failed task but continue with next task
-			// If we modified StopAt we should probably reset it or push the remaining part?
-			// TODO: Could optimize by pushing only remaining part if we track that.
+			// Log failed task but continue with next task.
 			queue.Push(task)
 			utils.Debug("task at offset %d failed after %d retries: %v", task.Offset, maxRetries, lastErr)
 		}
@@ -180,7 +177,7 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 
 	task := activeTask.Task
 
-	// Apply custom headers first (from browser extension: cookies, auth, referer, etc.)
+	// Apply custom headers first (from browser extension: cookies, auth, referer, etc.).
 	for key, val := range d.Headers {
 		// Skip Range header - we set it ourselves for parallel downloads
 		if key != "Range" {
@@ -188,11 +185,11 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 		}
 	}
 
-	// Set User-Agent from config only if not provided in custom headers
+	// Set User-Agent from config only if not provided in custom headers.
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", d.Runtime.GetUserAgent())
 	}
-	// Range header is always set for partial downloads (overrides any browser Range header)
+	// Range header is always set for partial downloads (overrides any browser Range header).
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", task.Offset, task.Offset+task.Length-1))
 
 	resp, err := client.Do(req)
@@ -221,14 +218,14 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
-	// Batching State
+	// Batching state limits lock contention on shared progress counters.
 	var pendingBytes int64
 	var pendingStart int64 = -1
 	lastUpdate := time.Now()
 	batchSizeThreshold := int64(types.WorkerBatchSize)
 	batchTimeThreshold := types.WorkerBatchInterval
 
-	// Helper to flush pending updates to global state
+	// Helper to flush pending updates to global state.
 	flushUpdates := func() {
 		if pendingBytes > 0 && d.State != nil {
 			// Update Chunk Map (Global Lock)
@@ -245,7 +242,7 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 	// Ensure we flush whatever we have on exit
 	defer flushUpdates()
 
-	// Read and write at offset
+	// Read and write at offset.
 	offset := task.Offset
 	for {
 		// Check if we should stop
@@ -255,8 +252,7 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 			return nil
 		}
 
-		// Calculate how much to read to fill buffer or hit stopAt/EOF
-		// We want to fill buf as much as possible to minimize WriteAt calls
+		// Fill buffer as much as possible to minimize WriteAt calls.
 
 		// Limit by remaining length to stopAt
 		remaining := stopAt - offset
@@ -289,8 +285,7 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 
 		if readSoFar > 0 {
 
-			// check stopAt again before writing
-			// truncate readSoFar
+			// Re-check stopAt before writing in case of work stealing.
 			currentStopAt := atomic.LoadInt64(&activeTask.StopAt)
 			if offset+int64(readSoFar) > currentStopAt {
 				readSoFar = int(currentStopAt - offset)
@@ -324,8 +319,8 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 				flushUpdates()
 			}
 
-			// Update EMA speed using sliding window (2 second window)
-			// This relies on WindowBytes which is updated atomically above, so independent of batching
+			// Update EMA speed using a sliding window (2 second window).
+			// This relies on WindowBytes updated atomically above, independent of batching.
 			windowElapsed := now.Sub(activeTask.WindowStart).Seconds()
 			if windowElapsed >= 2.0 {
 				windowBytes := atomic.SwapInt64(&activeTask.WindowBytes, 0)

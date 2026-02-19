@@ -5,7 +5,8 @@ import (
 	"concurrent_downloader/internal/download/types"
 )
 
-// Re-exported types for the public API.
+// Re-exported types for the public API to keep internal packages private
+// while maintaining a stable surface for consumers.
 type Settings = config.Settings
 
 type DownloadStatus = types.DownloadStatus

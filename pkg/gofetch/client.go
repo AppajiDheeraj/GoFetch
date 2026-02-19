@@ -14,7 +14,8 @@ import (
 	"sync"
 )
 
-// Client exposes a stable API for embedding GoFetch.
+// Client exposes a stable API for embedding GoFetch while owning shared
+// resources that must be initialized once per process.
 type Client struct {
 	service    core.DownloadService
 	pool       *download.WorkerPool
@@ -28,12 +29,15 @@ type Client struct {
 }
 
 // NewClient initializes the engine and returns a ready-to-use client.
+// It wires logging, state storage, and the worker pool so callers do not
+// need to manage internal singletons directly.
 func NewClient(opts *ClientOptions) (*Client, error) {
 	settings := resolveSettings(opts)
 	if settings == nil {
 		return nil, errors.New("settings not available")
 	}
 
+	// Ensure standard config directories exist before any settings or state load.
 	if err := config.EnsureDirs(); err != nil {
 		return nil, err
 	}
@@ -48,6 +52,7 @@ func NewClient(opts *ClientOptions) (*Client, error) {
 		}
 	}
 
+	// Debug and verbosity are process-wide switches; configure them once here.
 	utils.ConfigureDebug(logsDir)
 	if opts != nil {
 		utils.SetVerbose(opts.Verbose)
@@ -58,11 +63,13 @@ func NewClient(opts *ClientOptions) (*Client, error) {
 	if opts != nil && opts.StatePath != "" {
 		statePath = opts.StatePath
 	}
+	// State storage is required for pause/resume and history to function.
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return nil, err
 	}
 	state.Configure(statePath)
 
+	// Prefer the newer network setting; fall back to legacy connections config.
 	maxDownloads := settings.Network.MaxConcurrentDownloads
 	if maxDownloads <= 0 {
 		maxDownloads = settings.Connections.MaxConcurrentDownloads
@@ -71,6 +78,7 @@ func NewClient(opts *ClientOptions) (*Client, error) {
 		maxDownloads = opts.MaxConcurrentDownloads
 	}
 
+	// Buffered channel prevents worker goroutines from stalling on slow consumers.
 	progressCh := make(chan any, 100)
 	pool := download.NewWorkerPool(progressCh, maxDownloads)
 	service := core.NewLocalDownloadServiceWithInput(pool, progressCh)
@@ -85,6 +93,8 @@ func NewClient(opts *ClientOptions) (*Client, error) {
 	}, nil
 }
 
+// resolveSettings keeps the client usable even when settings are missing
+// or fail to load from disk.
 func resolveSettings(opts *ClientOptions) *config.Settings {
 	if opts != nil && opts.Settings != nil {
 		return opts.Settings
@@ -198,6 +208,7 @@ func (c *Client) Publish(msg interface{}) error {
 }
 
 // Shutdown gracefully stops the client and releases resources.
+// It is safe to call multiple times from different goroutines.
 func (c *Client) Shutdown() error {
 	if c == nil {
 		return nil

@@ -13,6 +13,7 @@ var (
 )
 
 func defaultGlobalShutdown() error {
+	// Prefer service shutdown to flush state and stop workers gracefully.
 	if GlobalService != nil {
 		return GlobalService.Shutdown()
 	}
@@ -23,6 +24,7 @@ func defaultGlobalShutdown() error {
 }
 
 func executeGlobalShutdown(reason string) error {
+	// Ensure shutdown only happens once even if multiple signals arrive.
 	globalShutdownOnce.Do(func() {
 		utils.Debug("Executing graceful shutdown (%s)", reason)
 		globalShutdownErr = globalShutdownFn()

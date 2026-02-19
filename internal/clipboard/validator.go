@@ -25,6 +25,7 @@ type Validator struct {
 }
 
 func NewValidator() *Validator {
+	// Restrict to HTTP/S to avoid unsafe schemes from clipboard.
 	return &Validator{
 		allowedSchemes: map[string]bool{"http": true, "https": true},
 	}

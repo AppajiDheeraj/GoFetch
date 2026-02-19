@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-// ActiveTask tracks a task currently being processed by a worker
+// ActiveTask tracks a task currently being processed by a worker and exposes
+// enough state to support health checks and work stealing.
 type ActiveTask struct {
 	Task          types.Task
 	CurrentOffset int64
@@ -51,7 +52,7 @@ func (at *ActiveTask) GetSpeed() float64 {
 	speed := at.Speed
 	at.SpeedMu.Unlock()
 
-	// Check for stall
+	// Check for stall and decay speed to reflect idle connections.
 	lastActivity := atomic.LoadInt64(&at.LastActivity)
 	if lastActivity == 0 {
 		return speed
@@ -60,8 +61,8 @@ func (at *ActiveTask) GetSpeed() float64 {
 	since := time.Since(time.Unix(0, lastActivity))
 	const decayThreshold = 2 * time.Second
 
-	// If we haven't heard from the worker in > 2s, decay the speed
-	// effectively: Speed = Speed * (Threshold / TimeSinceLastActivity)
+	// If we haven't heard from the worker in > 2s, decay the speed to avoid
+	// over-estimating throughput.
 	if since > decayThreshold {
 		decayFactor := float64(decayThreshold) / float64(since)
 		speed *= decayFactor

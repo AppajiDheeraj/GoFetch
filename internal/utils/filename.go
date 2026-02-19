@@ -1,6 +1,6 @@
 package utils
 
-// Package util provides utility functions used across the downloader application.
+// Package utils provides utility functions used across the downloader application.
 // It contains helper functions for common operations like extracting filenames from URLs
 // and defines shared constants. This package centralizes reusable functionality to avoid
 // code duplication and maintain consistency.
@@ -132,6 +132,7 @@ func DetermineFilename(rawurl string, resp *http.Response, verbose bool) (string
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
+// sanitizeFilename removes characters that are unsafe or invalid across platforms.
 func sanitizeFilename(name string) string {
 	// Replace backslashes with forward slashes first so filepath.Base treats them as separators
 	name = strings.ReplaceAll(name, "\\", "/")

@@ -17,7 +17,8 @@ import (
 	"time"
 )
 
-// ConcurrentDownloader handles multi-connection downloads
+// ConcurrentDownloader handles multi-connection downloads and owns the
+// in-memory coordination needed for pause/resume and health monitoring.
 type ConcurrentDownloader struct {
 	ProgressChan chan<- any           // Channel for events (start/complete/error)
 	ID           string               // Download ID
@@ -31,7 +32,7 @@ type ConcurrentDownloader struct {
 	Headers      map[string]string // Custom HTTP headers from browser (cookies, auth, etc.)
 }
 
-// NewConcurrentDownloader creates a new concurrent downloader with all required parameters
+// NewConcurrentDownloader creates a new concurrent downloader with all required parameters.
 func NewConcurrentDownloader(id string, progressCh chan<- any, progState *types.ProgressState, runtime *types.RuntimeConfig) *ConcurrentDownloader {
 	if runtime == nil {
 		runtime = &types.RuntimeConfig{
@@ -58,7 +59,8 @@ func NewConcurrentDownloader(id string, progressCh chan<- any, progState *types.
 	}
 }
 
-// getInitialConnections returns the starting number of connections based on file size
+// getInitialConnections returns the starting number of connections based on file size.
+// The heuristic favors fewer connections for small files to avoid overhead.
 func (d *ConcurrentDownloader) getInitialConnections(fileSize int64) int {
 	maxConns := d.Runtime.GetMaxConnectionsPerHost()
 	minChunkSize := d.Runtime.GetMinChunkSize() // e.g., 1MB or 5MB
@@ -116,7 +118,7 @@ func (d *ConcurrentDownloader) ReportMirrorError(url string) {
 	}
 }
 
-// calculateChunkSize determines optimal chunk size
+// calculateChunkSize determines optimal chunk size while enforcing minimums.
 func (d *ConcurrentDownloader) calculateChunkSize(fileSize int64, numConns int) int64 {
 	// Safety check
 	if numConns <= 0 {
@@ -141,7 +143,7 @@ func (d *ConcurrentDownloader) calculateChunkSize(fileSize int64, numConns int) 
 	return chunkSize
 }
 
-// determineChunkSize decides the strategy (Sequential vs Parallel)
+// determineChunkSize decides the strategy (Sequential vs Parallel).
 func (d *ConcurrentDownloader) determineChunkSize(fileSize int64, numConns int) int64 {
 	if d.Runtime.SequentialDownload {
 		// Sequential mode: Use small fixed chunks (MinChunkSize) to ensure strict ordering
@@ -161,7 +163,7 @@ func (d *ConcurrentDownloader) determineChunkSize(fileSize int64, numConns int) 
 	return d.calculateChunkSize(fileSize, numConns)
 }
 
-// createTasks generates initial task queue from file size and chunk size
+// createTasks generates initial task queue from file size and chunk size.
 func createTasks(fileSize, chunkSize int64) []types.Task {
 	if chunkSize <= 0 {
 		return nil
@@ -181,7 +183,7 @@ func createTasks(fileSize, chunkSize int64) []types.Task {
 	return tasks
 }
 
-// newConcurrentClient creates an http.Client tuned for concurrent downloads
+// newConcurrentClient creates an http.Client tuned for concurrent downloads.
 func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 	// Ensure we have enough connections per host
 	maxConns := d.Runtime.GetMaxConnectionsPerHost()
@@ -189,6 +191,7 @@ func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 		maxConns = numConns
 	}
 
+	// Keep proxy handling explicit to avoid surprising env interactions.
 	var proxyFunc func(*http.Request) (*url.URL, error)
 	if d.Runtime.ProxyURL != "" {
 		if parsedURL, err := url.Parse(d.Runtime.ProxyURL); err == nil {
@@ -229,9 +232,8 @@ func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 
 	return &http.Client{
 		Transport: transport,
-		// Preserve headers on redirects for authenticated downloads
-		// By default, Go strips sensitive headers (Cookie, Authorization) on cross-domain redirects.
-		// Since these headers were explicitly provided by the browser for this download, we forward them.
+		// Preserve headers on redirects for authenticated downloads.
+		// These headers were explicitly provided by the caller and should remain intact.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after 10 redirects")
@@ -251,8 +253,8 @@ func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 	}
 }
 
-// Download downloads a file using multiple concurrent connections
-// Uses pre-probed metadata (file size already known)
+// Download downloads a file using multiple concurrent connections.
+// Uses pre-probed metadata so we can preallocate and size the task queue.
 func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, candidateMirrors []string, activeMirrors []string, destPath string, fileSize int64) error {
 	utils.Debug("ConcurrentDownloader.Download: %s -> %s (size: %d, mirrors: %d)", rawurl, destPath, fileSize, len(activeMirrors))
 
@@ -286,13 +288,13 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		d.State.SetMirrors(statuses)
 	}
 
-	// Working file has .GoFetch suffix until download completes
+	// Working file has .GoFetch suffix until download completes.
 	workingPath := destPath + types.IncompleteSuffix
 
 	// Create cancellable context for pause support
 	downloadCtx, cancel := context.WithCancel(ctx)
 
-	// Helper synchronization
+	// Helper synchronization for balancer/monitor goroutines.
 	var wgHelpers sync.WaitGroup
 	// Ensure we wait for helpers to finish; run wait AFTER cancel (LIFO: cancel runs first)
 	defer wgHelpers.Wait()
@@ -302,8 +304,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		d.State.SetCancelFunc(cancel)
 	}
 
-	// Determine connections and chunk size
-	// Determine connections and chunk size
+	// Determine connections and chunk size.
 	numConns := d.getInitialConnections(fileSize)
 	chunkSize := d.determineChunkSize(fileSize, numConns)
 
@@ -315,7 +316,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		d.State.InitBitmap(fileSize, chunkSize)
 	}
 
-	// Create and preallocate output file with .GoFetch suffix
+	// Create and preallocate output file with .GoFetch suffix.
 	outFile, err := os.OpenFile(workingPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
@@ -327,12 +328,12 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 	}()
 
 	tasks := createTasks(fileSize, chunkSize)
-	// Check for saved state BEFORE truncating (resume case)
+	// Check for saved state BEFORE truncating (resume case).
 	savedState, err := state.LoadState(rawurl, destPath)
 	isResume := err == nil && savedState != nil && len(savedState.Tasks) > 0
 
 	if isResume {
-		// Resume: use saved tasks and restore downloaded counter
+		// Resume: use saved tasks and restore downloaded counter.
 		tasks = savedState.Tasks
 		if d.State != nil {
 			d.State.Downloaded.Store(savedState.Downloaded)
@@ -342,7 +343,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 			// Fix speed spike: sync session start so we don't count previous bytes as new speed
 			d.State.SyncSessionStart()
 
-			// RESTORE CHUNK BITMAP if available
+			// Restore chunk bitmap to keep UI in sync after resume.
 			if len(savedState.ChunkBitmap) > 0 && savedState.ActualChunkSize > 0 {
 				d.State.RestoreBitmap(savedState.ChunkBitmap, savedState.ActualChunkSize)
 
@@ -357,7 +358,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		}
 		utils.Debug("Resuming from saved state: %d tasks, %d bytes downloaded", len(tasks), savedState.Downloaded)
 	} else {
-		// Fresh download: preallocate file and create new tasks
+		// Fresh download: preallocate file and create new tasks.
 		if err := outFile.Truncate(fileSize); err != nil {
 			return fmt.Errorf("failed to preallocate file: %w", err)
 		}
@@ -373,7 +374,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 	// Start time for stats
 	startTime := time.Now()
 
-	// Start balancer goroutine for dynamic chunk splitting
+	// Start balancer goroutine for dynamic chunk splitting.
 	balancerCtx, cancelBalancer := context.WithCancel(downloadCtx)
 	defer cancelBalancer()
 
@@ -416,7 +417,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		}
 	}()
 
-	// Monitor for completion
+	// Monitor for completion.
 	wgHelpers.Add(1)
 	go func() {
 		defer wgHelpers.Done()
@@ -433,7 +434,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 				return
 			case <-ticker.C:
 				// Ensure queue is empty (no pending retries) before considering byte count.
-				// This protects against cutting off active retries even if byte count seems high (due to overlaps etc).
+				// This avoids early exit when overlaps inflate counters.
 				if queue.Len() == 0 && (int(queue.IdleWorkers()) == numConns || (d.State != nil && d.State.Downloaded.Load() >= fileSize)) {
 					queue.Close()
 					return
@@ -458,7 +459,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		}
 	}()
 
-	// Start workers
+	// Start workers.
 	var wg sync.WaitGroup
 	workerErrors := make(chan error, numConns)
 
@@ -509,9 +510,9 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		}
 	}
 
-	// Handle pause: state saved
+	// Handle pause: state saved.
 	if d.State != nil && d.State.IsPaused() {
-		// 1. Collect active tasks as remaining work FIRST
+		// 1. Collect active tasks as remaining work FIRST.
 		var activeRemaining []types.Task
 		d.activeMu.Lock()
 		for _, active := range d.activeTasks {
@@ -521,11 +522,11 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		}
 		d.activeMu.Unlock()
 
-		// 2. Collect remaining tasks from queue
+		// 2. Collect remaining tasks from queue.
 		remainingTasks := queue.DrainRemaining()
 		remainingTasks = append(remainingTasks, activeRemaining...)
 
-		// Calculate Downloaded from remaining tasks (ensures consistency)
+		// Calculate Downloaded from remaining tasks (ensures consistency).
 		var remainingBytes int64
 		for _, task := range remainingTasks {
 			remainingBytes += task.Length
@@ -549,7 +550,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 			totalElapsed = time.Since(startTime)
 		}
 
-		// Save state for resume (use computed value for consistency)
+		// Save state for resume (use computed value for consistency).
 		s := &types.DownloadState{
 			URL:             d.URL,
 			ID:              d.ID,
@@ -572,7 +573,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		return types.ErrPaused // Signal valid pause to caller
 	}
 
-	// Handle cancel: context was cancelled but not via Pause()
+	// Handle cancel: context was cancelled but not via Pause().
 	// Propagate cancellation so callers don't treat this as a successful completion.
 	if downloadCtx.Err() == context.Canceled {
 		return context.Canceled
@@ -590,7 +591,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 	// Close file before renaming
 	_ = outFile.Close()
 
-	// Rename from .GoFetch to final destination
+	// Rename from .GoFetch to final destination.
 	if err := os.Rename(workingPath, destPath); err != nil {
 		// Check for race condition: did someone else already rename it?
 		if os.IsNotExist(err) {
@@ -604,7 +605,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		return fmt.Errorf("failed to rename completed file: %w", err)
 	}
 
-	// Delete state file on successful completion
+	// Delete state file on successful completion.
 	_ = state.DeleteState(d.ID, d.URL, destPath)
 
 	// Note: Download completion notifications are handled by the TUI via DownloadCompleteMsg

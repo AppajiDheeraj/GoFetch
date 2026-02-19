@@ -18,7 +18,7 @@ var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
 	"AppleWebKit/537.36 (KHTML, like Gecko) " +
 	"Chrome/120.0.0.0 Safari/537.36"
 
-// ProbeResult contains all metadata from server probe
+// ProbeResult contains all metadata from server probe.
 type ProbeResult struct {
 	FileSize      int64
 	SupportsRange bool
@@ -26,15 +26,15 @@ type ProbeResult struct {
 	ContentType   string
 }
 
-// ProbeServer sends GET with Range: bytes=0-0 to determine server capabilities
-// headers is optional - pass nil for non-authenticated probes
+// ProbeServer sends GET with Range: bytes=0-0 to determine server capabilities.
+// headers is optional - pass nil for non-authenticated probes.
 func ProbeServer(ctx context.Context, rawurl string, filenameHint string, headers map[string]string) (*ProbeResult, error) {
 	utils.Debug("Probing server: %s", rawurl)
 
 	var resp *http.Response
 	var err error
 
-	// Create a client that preserves headers on redirects (for authenticated downloads)
+	// Create a client that preserves headers on redirects (for authenticated downloads).
 	client := &http.Client{
 		Timeout: types.ProbeTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -54,7 +54,7 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 		},
 	}
 
-	// Retry logic for probe request
+	// Retry logic for probe request to handle flaky networks.
 	for i := 0; i < 3; i++ {
 		if i > 0 {
 			time.Sleep(1 * time.Second)
@@ -85,9 +85,8 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 
 		resp, err = client.Do(req)
 
-		// If we get a 403 Forbidden or 405 Method Not Allowed, it might be due to the Range header.
-		// Some servers (like NotebookLLM streaming) reject Range requests entirely.
-		// We retry once without the Range header.
+		// If we get a 403/405, it might be due to the Range header.
+		// Some servers reject Range requests entirely, so we retry without it.
 		if err == nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed) {
 			utils.Debug("Probe got %d, retrying without Range header", resp.StatusCode)
 			_ = resp.Body.Close() // Close previous response
@@ -129,7 +128,7 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 
 	result := &ProbeResult{}
 
-	// Determine range support and file size based on status code
+	// Determine range support and file size based on status code.
 	switch resp.StatusCode {
 	case http.StatusPartialContent: // 206
 		result.SupportsRange = true
@@ -159,7 +158,7 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Determine filename using strengthened logic
+	// Determine filename using strengthened logic.
 	name, _, err := utils.DetermineFilename(rawurl, resp, false)
 	if err != nil {
 		utils.Debug("Error determining filename: %v", err)
@@ -180,7 +179,7 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 	return result, nil
 }
 
-// ProbeMirrors concurrently checks a list of mirrors and returns valid ones and errors
+// ProbeMirrors concurrently checks a list of mirrors and returns valid ones and errors.
 func ProbeMirrors(ctx context.Context, mirrors []string) (valid []string, errors map[string]error) {
 	unique := make(map[string]bool)
 	for _, m := range mirrors {
@@ -204,7 +203,7 @@ func ProbeMirrors(ctx context.Context, mirrors []string) (valid []string, errors
 		go func(target string) {
 			defer wg.Done()
 
-			// Short timeout for bulk probing
+			// Short timeout for bulk probing.
 			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 

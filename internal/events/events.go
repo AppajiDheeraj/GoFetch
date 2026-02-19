@@ -39,6 +39,7 @@ type DownloadErrorMsg struct {
 }
 
 func (m DownloadErrorMsg) MarshalJSON() ([]byte, error) {
+	// Ensure errors serialize as strings for client compatibility.
 	type encoded struct {
 		DownloadID string `json:"DownloadID"`
 		Filename   string `json:"Filename,omitempty"`

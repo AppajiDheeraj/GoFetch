@@ -33,6 +33,7 @@ type DownloadService interface {
 	// StreamEvents returns a channel that receives real-time download events.
 	// For local mode, this is a direct channel.
 	// For remote mode, this is sourced from SSE.
+	// The returned cleanup function must be called to release listener resources.
 	StreamEvents(ctx context.Context) (<-chan interface{}, func(), error)
 
 	// Publish emits an event into the service's event stream.
@@ -41,6 +42,6 @@ type DownloadService interface {
 	// GetStatus returns a status for a single download by id.
 	GetStatus(id string) (*types.DownloadStatus, error)
 
-	// Shutdown handles graceful shutdown of the service
+	// Shutdown handles graceful shutdown of the service.
 	Shutdown() error
 }

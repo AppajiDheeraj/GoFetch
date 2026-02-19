@@ -31,7 +31,7 @@ var serverStartCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		initializeGlobalState()
 
-		// Attempt to acquire lock
+		// Attempt to acquire lock to ensure a single daemon instance.
 		isMaster, err := AcquireLock()
 		if err != nil {
 			fmt.Printf("Error acquiring lock: %v\n", err)
@@ -56,14 +56,11 @@ var serverStartCmd = &cobra.Command{
 		exitWhenDone, _ := cmd.Flags().GetBool("exit-when-done")
 		noResume, _ := cmd.Flags().GetBool("no-resume")
 
-		// Save current PID to file
+		// Save current PID to file for status/stop commands.
 		savePID()
 		defer removePID()
 
-		// Determine Port
-		// Determine Port
-		// Logic moved to startServerLogic, or we need to pass flags.
-		// Use startServerLogic
+		// Hand off to shared server start logic.
 		startServerLogic(cmd, args, portFlag, batchFile, outputDir, filename, forceSingle, exitWhenDone, noResume)
 	},
 }
@@ -100,7 +97,7 @@ var serverStopCmd = &cobra.Command{
 			return
 		}
 
-		// Try to send SIGTERM on Unix-like systems
+		// Try to send SIGTERM on Unix-like systems.
 		err = process.Signal(syscall.SIGTERM)
 		if err != nil {
 			fmt.Printf("Error stopping server: %v\n", err)
@@ -157,6 +154,7 @@ func init() {
 }
 
 func savePID() {
+	// PID file makes `server stop/status` reliable across shells.
 	pid := os.Getpid()
 	pidFile := filepath.Join(config.GetRuntimeDir(), "pid")
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", pid)), 0o644); err != nil {
@@ -182,6 +180,7 @@ func readPID() int {
 }
 
 func cleanupRuntimeFiles() {
+	// Cleanup runtime artifacts after forced stop.
 	removePID()
 	removeActivePort()
 	lockFile := filepath.Join(config.GetRuntimeDir(), "GoFetch.lock")
@@ -197,7 +196,7 @@ func startServerLogic(cmd *cobra.Command, args []string, portFlag int, batchFile
 		os.Exit(1)
 	}
 
-	// Initialize Service
+	// Initialize Service.
 	GlobalService = core.NewLocalDownloadServiceWithInput(GlobalPool, GlobalProgressCh)
 
 	saveActivePort(port)
@@ -205,7 +204,7 @@ func startServerLogic(cmd *cobra.Command, args []string, portFlag int, batchFile
 
 	go startHTTPServer(listener, port, outputDir, GlobalService)
 
-	// Queue initial downloads
+	// Queue initial downloads.
 	go func() {
 		var urls []string
 		urls = append(urls, args...)
@@ -235,7 +234,7 @@ func startServerLogic(cmd *cobra.Command, args []string, portFlag int, batchFile
 
 	StartHeadlessConsumer()
 
-	// Auto-resume paused downloads (unless --no-resume)
+	// Auto-resume paused downloads (unless --no-resume).
 	if !noResume {
 		resumePausedDownloads()
 	}

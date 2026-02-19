@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// checkWorkerHealth detects slow workers and cancels them
+// checkWorkerHealth detects slow or stalled workers and cancels them so
+// remaining work can be rescheduled on healthier connections.
 func (d *ConcurrentDownloader) checkWorkerHealth() {
 	d.activeMu.Lock()
 	defer d.activeMu.Unlock()
@@ -17,7 +18,7 @@ func (d *ConcurrentDownloader) checkWorkerHealth() {
 
 	now := time.Now()
 
-	// First pass: calculate mean speed
+	// First pass: calculate mean speed as a baseline for slow detection.
 	var totalSpeed float64
 	var speedCount int
 	for _, active := range d.activeTasks {
@@ -51,7 +52,7 @@ func (d *ConcurrentDownloader) checkWorkerHealth() {
 		}
 	}
 
-	// Second pass: check for slow and stalled workers
+	// Second pass: check for slow and stalled workers.
 	stallTimeout := d.Runtime.GetStallTimeout()
 	for workerID, active := range d.activeTasks {
 

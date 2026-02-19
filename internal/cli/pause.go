@@ -33,7 +33,7 @@ var pauseCmd = &cobra.Command{
 				// TODO: Implement /pause-all endpoint or iterate
 				fmt.Println("Pausing all downloads is not yet implemented for running server.")
 			} else {
-				// Offline mode: update DB directly
+				// Offline mode: update DB directly to avoid network dependency.
 				if err := state.PauseAllDownloads(); err != nil {
 					fmt.Fprintf(os.Stderr, "Error pausing downloads: %v\n", err)
 					os.Exit(1)

@@ -9,6 +9,8 @@ import (
 	"concurrent_downloader/internal/utils"
 )
 
+// ProgressState is a concurrency-safe snapshot of a download used by UI and
+// pause/resume logic without blocking worker throughput.
 type ProgressState struct {
 	ID            string
 	Downloaded    atomic.Int64
@@ -80,6 +82,7 @@ func (ps *ProgressState) SetTotalSize(size int64) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.TotalSize = size
+	// Reset session tracking when the true size is known.
 	ps.SessionStartBytes = ps.VerifiedProgress.Load()
 	ps.StartTime = time.Now()
 }
@@ -102,6 +105,7 @@ func (ps *ProgressState) GetError() error {
 	return nil
 }
 
+// GetProgress returns a consistent snapshot used by UI and APIs.
 func (ps *ProgressState) GetProgress() (downloaded int64, total int64, totalElapsed time.Duration, sessionElapsed time.Duration, connections int32, sessionStartBytes int64) {
 	downloaded = ps.VerifiedProgress.Load()
 	connections = ps.ActiveWorkers.Load()
@@ -132,6 +136,7 @@ func (ps *ProgressState) GetProgress() (downloaded int64, total int64, totalElap
 	return
 }
 
+// Pause marks the state as paused and triggers worker cancellation.
 func (ps *ProgressState) Pause() {
 	ps.Paused.Store(true)
 	ps.mu.Lock()
@@ -147,6 +152,7 @@ func (ps *ProgressState) SetCancelFunc(cancel context.CancelFunc) {
 	ps.cancelFunc = cancel
 }
 
+// Resume clears the paused flag; workers will be re-queued by the pool.
 func (ps *ProgressState) Resume() {
 	ps.Paused.Store(false)
 }
@@ -223,7 +229,7 @@ const (
 	ChunkCompleted   ChunkStatus = 2 // 10 (Bit 2 set)
 )
 
-// InitBitmap initializes the chunk bitmap
+// InitBitmap initializes the chunk bitmap used for UI visualization.
 func (ps *ProgressState) InitBitmap(totalSize int64, chunkSize int64) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -251,7 +257,7 @@ func (ps *ProgressState) InitBitmap(totalSize int64, chunkSize int64) {
 	ps.ChunkProgress = make([]int64, numChunks)
 }
 
-// RestoreBitmap restores the chunk bitmap from saved state
+// RestoreBitmap restores the chunk bitmap from saved state.
 func (ps *ProgressState) RestoreBitmap(bitmap []byte, actualChunkSize int64) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -335,7 +341,7 @@ func (ps *ProgressState) getChunkState(index int) ChunkStatus {
 	return ChunkStatus(val)
 }
 
-// UpdateChunkStatus updates the bitmap based on byte range
+// UpdateChunkStatus updates the bitmap based on byte range.
 func (ps *ProgressState) UpdateChunkStatus(offset, length int64, status ChunkStatus) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -419,7 +425,7 @@ func (ps *ProgressState) UpdateChunkStatus(offset, length int64, status ChunkSta
 	}
 }
 
-// RecalculateProgress reconstructs ChunkProgress from remaining tasks (for resume)
+// RecalculateProgress reconstructs ChunkProgress from remaining tasks (for resume).
 func (ps *ProgressState) RecalculateProgress(remainingTasks []Task) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -506,7 +512,7 @@ func (ps *ProgressState) RecalculateProgress(remainingTasks []Task) {
 	}
 }
 
-// GetBitmap returns a copy of the bitmap and metadata
+// GetBitmap returns a copy of the bitmap and metadata.
 func (ps *ProgressState) GetBitmap() ([]byte, int, int64, int64, []int64) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()

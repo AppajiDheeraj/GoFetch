@@ -55,14 +55,14 @@ func (d *SingleDownloader) Download(ctx context.Context, rawurl, destPath string
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Use .GoFetch extension for incomplete file
+	// Use .GoFetch extension for incomplete file to keep partials discoverable.
 	workingPath := destPath + types.IncompleteSuffix
 	outFile, err := os.Create(workingPath)
 	if err != nil {
 		return err
 	}
 
-	// Track whether we completed successfully for cleanup
+	// Track whether we completed successfully for cleanup.
 	success := false
 	defer func() {
 		outFile.Close()
@@ -73,7 +73,7 @@ func (d *SingleDownloader) Download(ctx context.Context, rawurl, destPath string
 
 	start := time.Now()
 
-	// Copy response body to file with context cancellation support
+	// Copy response body to file with context cancellation support.
 	var written int64
 	buf := make([]byte, d.Runtime.GetWorkerBufferSize())
 
@@ -117,9 +117,9 @@ func (d *SingleDownloader) Download(ctx context.Context, rawurl, destPath string
 		return fmt.Errorf("close error: %w", err)
 	}
 
-	// Rename .GoFetch file to final destination
+	// Rename .GoFetch file to final destination.
 	if err := os.Rename(workingPath, destPath); err != nil {
-		// Fallback: copy if rename fails (cross-device)
+		// Fallback: copy if rename fails (cross-device).
 		if copyErr := copyFile(workingPath, destPath); copyErr != nil {
 			return fmt.Errorf("failed to finalize file: %w", copyErr)
 		}

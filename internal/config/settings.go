@@ -78,6 +78,7 @@ type SettingMeta struct {
 	Type        string // "string", "int", "int64", "bool", "duration", "float64"
 }
 
+// GetSettingsMetadata returns schema details for settings UI forms.
 func GetSettingsMetadata() map[string][]SettingMeta {
 	return map[string][]SettingMeta{
 		"General": {
@@ -111,6 +112,7 @@ func GetSettingsMetadata() map[string][]SettingMeta {
 	}
 }
 
+// CategoryOrder defines UI ordering for settings groups.
 func CategoryOrder() []string {
 	return []string{"General", "Network", "Performance"}
 }
@@ -162,6 +164,7 @@ func GetSettingsPath() string {
 	return filepath.Join(GetGoFetchDir(), "settings.json")
 }
 
+// LoadSettings returns persisted settings or defaults if none exist.
 func LoadSettings() (*Settings, error) {
 	path := GetSettingsPath()
 
@@ -182,6 +185,7 @@ func LoadSettings() (*Settings, error) {
 	return settings, nil
 }
 
+// SaveSettings writes settings to disk using an atomic rename.
 func SaveSettings(s *Settings) error {
 	path := GetSettingsPath()
 
@@ -220,6 +224,7 @@ type RuntimeConfig struct {
 	SpeedEmaAlpha         float64
 }
 
+// ToRuntimeConfig projects persisted settings into runtime-only config.
 func (s *Settings) ToRuntimeConfig() *RuntimeConfig {
 	return &RuntimeConfig{
 		MaxConnectionsPerHost: s.Connections.MaxConnectionsPerHost,

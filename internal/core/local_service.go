@@ -17,6 +17,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// completedSpeedMBps normalizes historical speed values to MB/s for UI parity.
+// It falls back to elapsed time when AvgSpeed was not recorded.
 func completedSpeedMBps(entry types.DownloadEntry) float64 {
 	if entry.Status != "completed" {
 		return 0
@@ -30,7 +32,8 @@ func completedSpeedMBps(entry types.DownloadEntry) float64 {
 	return 0
 }
 
-// ReloadSettings reloads settings from disk
+// ReloadSettings reloads settings from disk so long-running clients can apply
+// configuration changes without restarting the service.
 func (s *LocalDownloadService) ReloadSettings() error {
 	settings, err := config.LoadSettings()
 	if err != nil {
@@ -42,7 +45,8 @@ func (s *LocalDownloadService) ReloadSettings() error {
 	return nil
 }
 
-// LocalDownloadService implements DownloadService for the local embedded engine.
+// LocalDownloadService implements DownloadService for the local embedded engine
+// and owns the in-process event fanout for UI clients.
 type LocalDownloadService struct {
 	Pool    *download.WorkerPool
 	InputCh chan interface{}
@@ -95,10 +99,10 @@ func NewLocalDownloadServiceWithInput(pool *download.WorkerPool, inputCh chan in
 	s.ctx = ctx
 	s.cancel = cancel
 
-	// Start broadcaster
+	// Start broadcaster to fan out events to any number of UI listeners.
 	go s.broadcastLoop()
 
-	// Start progress reporter
+	// Start progress reporter only when the worker pool is active.
 	if pool != nil {
 		s.reportTicker = time.NewTicker(ReportInterval)
 		go s.reportProgressLoop()
@@ -119,15 +123,14 @@ func (s *LocalDownloadService) broadcastLoop() {
 			}
 
 			if isProgress {
-				// Non-blocking send for progress updates
+				// Progress updates are high volume; drop rather than backpressure.
 				select {
 				case ch <- msg:
 				default:
 					// Drop progress message if channel is full
 				}
 			} else {
-				// Blocking send with timeout for critical state changes
-				// We don't want to drop these, but we also don't want to block forever if a client is dead
+				// Critical state changes should be delivered, but not at the cost of deadlocking.
 				select {
 				case ch <- msg:
 				case <-time.After(1 * time.Second):
@@ -137,7 +140,7 @@ func (s *LocalDownloadService) broadcastLoop() {
 		}
 		s.listenerMu.Unlock()
 	}
-	// Close all listeners when input closes
+	// Close all listeners when input closes to unblock client goroutines.
 	s.listenerMu.Lock()
 	for _, ch := range s.listeners {
 		close(ch)
@@ -158,6 +161,7 @@ func (s *LocalDownloadService) reportProgressLoop() {
 		if s.Pool == nil {
 			continue
 		}
+		// Keep speed stable by smoothing with EMA.
 		alpha := s.getSpeedEmaAlpha()
 
 		var batch events.BatchProgressMsg
@@ -199,7 +203,7 @@ func (s *LocalDownloadService) reportProgressLoop() {
 				ActiveConnections: int(connections),
 			}
 
-			// Add Chunk Bitmap for visualization (if initialized)
+			// Add chunk bitmap for visualization (if initialized).
 			bitmap, width, _, chunkSize, chunkProgress := cfg.State.GetBitmap()
 			if width > 0 && len(bitmap) > 0 {
 				msg.ChunkBitmap = bitmap
@@ -207,7 +211,7 @@ func (s *LocalDownloadService) reportProgressLoop() {
 				msg.ActualChunkSize = chunkSize
 
 				// Send chunk progress less frequently to keep updates lightweight.
-				// Chunk map is meant to be intuitive, not perfectly accurate.
+				// The map is meant to be intuitive, not perfectly accurate.
 				if time.Since(lastChunkProgress[cfg.ID]) >= 500*time.Millisecond {
 					msg.ChunkProgress = chunkProgress
 					lastChunkProgress[cfg.ID] = time.Now()
@@ -217,7 +221,7 @@ func (s *LocalDownloadService) reportProgressLoop() {
 			batch = append(batch, msg)
 		}
 
-		// Send batch to InputCh (non-blocking) if not empty
+		// Send batch to InputCh (non-blocking) so progress does not stall workers.
 		if len(batch) > 0 {
 			select {
 			case s.InputCh <- batch:
@@ -269,7 +273,7 @@ func (s *LocalDownloadService) StreamEvents(ctx context.Context) (<-chan interfa
 		})
 	}
 
-	// Cleanup listener on context cancellation or service shutdown
+	// Cleanup listener on context cancellation or service shutdown to avoid leaks.
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -287,6 +291,7 @@ func (s *LocalDownloadService) Publish(msg interface{}) error {
 	if s.InputCh == nil {
 		return fmt.Errorf("input channel not initialized")
 	}
+	// Use a timeout so a blocked broadcaster does not deadlock callers.
 	select {
 	case s.InputCh <- msg:
 		return nil
@@ -320,7 +325,7 @@ func (s *LocalDownloadService) Shutdown() error {
 func (s *LocalDownloadService) List() ([]types.DownloadStatus, error) {
 	var statuses []types.DownloadStatus
 
-	// 1. Get active downloads from pool
+	// 1. Get active downloads from pool for real-time status.
 	if s.Pool != nil {
 		activeConfigs := s.Pool.GetAll()
 		for _, cfg := range activeConfigs {
@@ -377,7 +382,7 @@ func (s *LocalDownloadService) List() ([]types.DownloadStatus, error) {
 		}
 	}
 
-	// 2. Fetch from database for history/paused/completed
+	// 2. Fetch from database for history/paused/completed to cover inactive jobs.
 	dbDownloads, err := state.ListAllDownloads()
 	if err == nil {
 		// Create a map of existing IDs to avoid duplicates
@@ -510,7 +515,7 @@ func (s *LocalDownloadService) Resume(id string) error {
 		return nil
 	}
 
-	// Cold Resume Logic
+	// Cold Resume Logic: reconstruct config from persisted state.
 	entry, err := state.GetDownload(id)
 	if err != nil || entry == nil {
 		return fmt.Errorf("download not found")
@@ -597,7 +602,7 @@ func (s *LocalDownloadService) ResumeBatch(ids []string) []error {
 		return errs
 	}
 
-	// 1. Try pool resume first for all
+	// 1. Try pool resume first for all to avoid extra state IO.
 	toLoad := []string{}
 	idMap := make(map[string]int)
 
@@ -630,7 +635,7 @@ func (s *LocalDownloadService) ResumeBatch(ids []string) []error {
 		outputPath = "."
 	}
 
-	// 2. Load states in batch
+	// 2. Load states in batch to reduce DB round trips.
 	states, err := state.LoadStates(toLoad)
 	if err != nil {
 		// If batch load fails, mark all remaining as failed
@@ -641,7 +646,7 @@ func (s *LocalDownloadService) ResumeBatch(ids []string) []error {
 		return errs
 	}
 
-	// 3. Process loaded states
+	// 3. Process loaded states and re-queue.
 	for _, id := range toLoad {
 		idx := idMap[id]
 		savedState, ok := states[id]

@@ -31,6 +31,7 @@ var resumeCmd = &cobra.Command{
 			if port > 0 {
 				fmt.Println("Resuming all downloads is not yet implemented for running server.")
 			} else {
+				// Offline mode updates DB so next server start can resume.
 				if err := state.ResumeAllDownloads(); err != nil {
 					fmt.Fprintf(os.Stderr, "Error resuming downloads: %v\n", err)
 					os.Exit(1)

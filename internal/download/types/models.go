@@ -5,6 +5,7 @@ type Task struct {
 	Length int64 `json:"length"`
 }
 
+// DownloadState persists a paused download so it can be resumed later.
 type DownloadState struct {
 	ID         string   `json:"id"`       // Unique ID of the download
 	URLHash    string   `json:"url_hash"` // Hash of URL only (for master list compatibility)
@@ -42,13 +43,11 @@ type DownloadEntry struct {
 	Mirrors     []string `json:"mirrors,omitempty"`
 }
 
-
-
 type MasterList struct {
 	Downloads []DownloadEntry `json:"downloads"`
 }
 
-// DownloadStatus represents the transient status of an active download
+// DownloadStatus represents the transient status of an active download.
 type DownloadStatus struct {
 	ID          string  `json:"id"`
 	URL         string  `json:"url"`
