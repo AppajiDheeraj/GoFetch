@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strings"
 	"time"
 )
 
@@ -82,6 +83,7 @@ type RuntimeConfig struct {
 	SequentialDownload    bool
 	MinChunkSize          int64
 	ForceSingle           bool
+	ProtocolPreference    string
 
 	WorkerBufferSize      int
 	MaxTaskRetries        int
@@ -90,6 +92,13 @@ type RuntimeConfig struct {
 	StallTimeout          time.Duration
 	SpeedEmaAlpha         float64
 }
+
+const (
+	ProtocolAuto  = "auto"
+	ProtocolHTTP1 = "http1"
+	ProtocolHTTP2 = "http2"
+	ProtocolHTTP3 = "http3"
+)
 
 // GetUserAgent returns the configured user agent or the default
 func (r *RuntimeConfig) GetUserAgent() string {
@@ -121,6 +130,21 @@ func (r *RuntimeConfig) GetWorkerBufferSize() int {
 		return WorkerBuffer
 	}
 	return r.WorkerBufferSize
+}
+
+// GetProtocolPreference returns a normalized protocol preference string.
+func (r *RuntimeConfig) GetProtocolPreference() string {
+	if r == nil || r.ProtocolPreference == "" {
+		return ProtocolAuto
+	}
+
+	pref := strings.ToLower(strings.TrimSpace(r.ProtocolPreference))
+	switch pref {
+	case ProtocolHTTP1, ProtocolHTTP2, ProtocolHTTP3:
+		return pref
+	default:
+		return ProtocolAuto
+	}
 }
 
 const (

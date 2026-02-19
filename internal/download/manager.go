@@ -31,6 +31,8 @@ type ProbeResult struct {
 	SupportsRange bool
 	Filename      string
 	ContentType   string
+	SupportsHTTP2 bool
+	SupportsHTTP3 bool
 }
 
 // uniqueFilePath picks a collision-free path while preserving the base name
@@ -221,7 +223,7 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 		d := concurrent.NewConcurrentDownloader(cfg.ID, cfg.ProgressCh, cfg.State, cfg.Runtime)
 		d.Headers = cfg.Headers // Forward custom headers from browser extension
 		utils.Debug("Calling Download with mirrors: %v", cfg.Mirrors)
-		downloadErr = d.Download(ctx, cfg.URL, cfg.Mirrors, activeMirrors, destPath, probe.FileSize)
+		downloadErr = d.Download(ctx, cfg.URL, cfg.Mirrors, activeMirrors, destPath, probe.FileSize, probe.SupportsHTTP2, probe.SupportsHTTP3)
 	} else {
 		// Fallback to single-threaded downloader
 		utils.Debug("Using single-threaded downloader")

@@ -2,9 +2,12 @@ package engine
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +27,8 @@ type ProbeResult struct {
 	SupportsRange bool
 	Filename      string
 	ContentType   string
+	SupportsHTTP2 bool
+	SupportsHTTP3 bool
 }
 
 // ProbeServer sends GET with Range: bytes=0-0 to determine server capabilities.
@@ -173,10 +178,86 @@ func ProbeServer(ctx context.Context, rawurl string, filenameHint string, header
 
 	result.ContentType = resp.Header.Get("Content-Type")
 
+	parsedURL, parseErr := url.Parse(rawurl)
+	if parseErr == nil && strings.EqualFold(parsedURL.Scheme, "https") {
+		result.SupportsHTTP3 = supportsHTTP3FromAltSvc(resp.Header.Values("Alt-Svc"))
+		if resp.ProtoMajor == 2 {
+			result.SupportsHTTP2 = true
+		} else {
+			result.SupportsHTTP2 = probeHTTP2ALPN(ctx, parsedURL)
+		}
+	}
+
 	utils.Debug("Probe complete - filename: %s, size: %d, range: %v",
 		result.Filename, result.FileSize, result.SupportsRange)
 
 	return result, nil
+}
+
+func supportsHTTP3FromAltSvc(values []string) bool {
+	for _, raw := range values {
+		entries := strings.Split(raw, ",")
+		for _, entry := range entries {
+			token := strings.TrimSpace(entry)
+			if token == "" {
+				continue
+			}
+			eq := strings.Index(token, "=")
+			if eq == -1 {
+				continue
+			}
+			proto := strings.TrimSpace(token[:eq])
+			if proto == "h3" || strings.HasPrefix(proto, "h3-") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func probeHTTP2ALPN(ctx context.Context, parsedURL *url.URL) bool {
+	if parsedURL == nil {
+		return false
+	}
+
+	host := parsedURL.Hostname()
+	if host == "" {
+		return false
+	}
+
+	port := parsedURL.Port()
+	if port == "" {
+		port = "443"
+	}
+
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	tlsDialer := tls.Dialer{
+		NetDialer: dialer,
+		Config: &tls.Config{
+			NextProtos: []string{"h2", "http/1.1"},
+			ServerName: host,
+		},
+	}
+
+	conn, err := tlsDialer.DialContext(dialCtx, "tcp", net.JoinHostPort(host, port))
+	if err != nil {
+		utils.Debug("ALPN probe failed for %s:%s: %v", host, port, err)
+		return false
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		return false
+	}
+
+	state := tlsConn.ConnectionState()
+	return state.NegotiatedProtocol == "h2"
 }
 
 // ProbeMirrors concurrently checks a list of mirrors and returns valid ones and errors.

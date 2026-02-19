@@ -13,8 +13,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 )
 
 // ConcurrentDownloader handles multi-connection downloads and owns the
@@ -32,6 +36,27 @@ type ConcurrentDownloader struct {
 	Headers      map[string]string // Custom HTTP headers from browser (cookies, auth, etc.)
 }
 
+type protocolClient struct {
+	name   string
+	client *http.Client
+}
+
+type clientSet struct {
+	primary        protocolClient
+	fallbacks      []protocolClient
+	http3Transport *http3.Transport
+}
+
+func (c *clientSet) Close() {
+	if c == nil || c.http3Transport == nil {
+		return
+	}
+
+	if err := c.http3Transport.Close(); err != nil {
+		utils.Debug("Error closing HTTP/3 transport: %v", err)
+	}
+}
+
 // NewConcurrentDownloader creates a new concurrent downloader with all required parameters.
 func NewConcurrentDownloader(id string, progressCh chan<- any, progState *types.ProgressState, runtime *types.RuntimeConfig) *ConcurrentDownloader {
 	if runtime == nil {
@@ -39,6 +64,7 @@ func NewConcurrentDownloader(id string, progressCh chan<- any, progState *types.
 			MaxConnectionsPerHost: types.PerHostMax,
 			MinChunkSize:          types.MinChunk,
 			WorkerBufferSize:      types.WorkerBuffer,
+			ProtocolPreference:    types.ProtocolAuto,
 		}
 	}
 
@@ -184,7 +210,7 @@ func createTasks(fileSize, chunkSize int64) []types.Task {
 }
 
 // newConcurrentClient creates an http.Client tuned for concurrent downloads.
-func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
+func (d *ConcurrentDownloader) newConcurrentClients(numConns int, supportsHTTP2 bool, supportsHTTP3 bool) *clientSet {
 	// Ensure we have enough connections per host
 	maxConns := d.Runtime.GetMaxConnectionsPerHost()
 	if numConns > maxConns {
@@ -205,57 +231,147 @@ func (d *ConcurrentDownloader) newConcurrentClient(numConns int) *http.Client {
 		proxyFunc = http.ProxyFromEnvironment
 	}
 
-	transport := &http.Transport{
-		// Connection pooling
-		MaxIdleConns:        types.DefaultMaxIdleConns,
-		MaxIdleConnsPerHost: maxConns + 2, // Slightly more than max to handle bursts
-		MaxConnsPerHost:     maxConns,
-		Proxy:               proxyFunc,
+	buildHTTPTransport := func(forceHTTP2 bool) *http.Transport {
+		transport := &http.Transport{
+			// Connection pooling
+			MaxIdleConns:        types.DefaultMaxIdleConns,
+			MaxIdleConnsPerHost: maxConns + 2, // Slightly more than max to handle bursts
+			MaxConnsPerHost:     maxConns,
+			Proxy:               proxyFunc,
 
-		// Timeouts to prevent hung connections
-		IdleConnTimeout:       types.DefaultIdleConnTimeout,
-		TLSHandshakeTimeout:   types.DefaultTLSHandshakeTimeout,
-		ResponseHeaderTimeout: types.DefaultResponseHeaderTimeout,
-		ExpectContinueTimeout: types.DefaultExpectContinueTimeout,
+			// Timeouts to prevent hung connections
+			IdleConnTimeout:       types.DefaultIdleConnTimeout,
+			TLSHandshakeTimeout:   types.DefaultTLSHandshakeTimeout,
+			ResponseHeaderTimeout: types.DefaultResponseHeaderTimeout,
+			ExpectContinueTimeout: types.DefaultExpectContinueTimeout,
 
-		// Performance tuning
-		DisableCompression: true,  // Files are usually already compressed
-		ForceAttemptHTTP2:  false, // FORCE HTTP/1.1 for multiple TCP connections
-		TLSNextProto:       make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+			// Performance tuning
+			DisableCompression: true, // Files are usually already compressed
+			ForceAttemptHTTP2:  forceHTTP2,
 
-		// Dial settings for TCP reliability
-		DialContext: (&net.Dialer{
-			Timeout:   types.DialTimeout,
-			KeepAlive: types.KeepAliveDuration,
-		}).DialContext,
+			// Dial settings for TCP reliability
+			DialContext: (&net.Dialer{
+				Timeout:   types.DialTimeout,
+				KeepAlive: types.KeepAliveDuration,
+			}).DialContext,
+		}
+
+		if !forceHTTP2 {
+			transport.TLSNextProto = make(map[string]func(authority string, c *tls.Conn) http.RoundTripper)
+		}
+
+		return transport
 	}
 
-	return &http.Client{
-		Transport: transport,
-		// Preserve headers on redirects for authenticated downloads.
-		// These headers were explicitly provided by the caller and should remain intact.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("stopped after 10 redirects")
-			}
-			// Copy headers from original request to redirect request
-			if len(via) > 0 {
-				for key, vals := range via[0].Header {
-					// Skip Range header - we set our own for parallel downloads
-					if key == "Range" {
-						continue
+	newHTTPClient := func(transport http.RoundTripper) *http.Client {
+		return &http.Client{
+			Transport: transport,
+			// Preserve headers on redirects for authenticated downloads.
+			// These headers were explicitly provided by the caller and should remain intact.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				// Copy headers from original request to redirect request
+				if len(via) > 0 {
+					for key, vals := range via[0].Header {
+						// Skip Range header - we set our own for parallel downloads
+						if key == "Range" {
+							continue
+						}
+						req.Header[key] = vals
 					}
-					req.Header[key] = vals
+				}
+				return nil
+			},
+		}
+	}
+
+	protocol := d.Runtime.GetProtocolPreference()
+	if d.Runtime != nil && d.Runtime.ProxyURL != "" && supportsHTTP3 {
+		utils.Debug("HTTP/3 disabled because proxy is configured")
+		supportsHTTP3 = false
+	}
+
+	http1Client := protocolClient{name: types.ProtocolHTTP1, client: newHTTPClient(buildHTTPTransport(false))}
+	http2Client := protocolClient{name: types.ProtocolHTTP2, client: newHTTPClient(buildHTTPTransport(true))}
+
+	var http3Client protocolClient
+	var http3Transport *http3.Transport
+	if supportsHTTP3 {
+		http3Transport = &http3.Transport{
+			TLSClientConfig: &tls.Config{
+				NextProtos: []string{"h3"},
+			},
+			QUICConfig: &quic.Config{
+				HandshakeIdleTimeout: types.DefaultTLSHandshakeTimeout,
+				MaxIdleTimeout:       types.DefaultIdleConnTimeout,
+				KeepAlivePeriod:      types.KeepAliveDuration,
+			},
+		}
+		http3Client = protocolClient{name: types.ProtocolHTTP3, client: newHTTPClient(http3Transport)}
+	}
+
+	formatNames := func(primary protocolClient, fallbacks []protocolClient) string {
+		if len(fallbacks) == 0 {
+			return primary.name
+		}
+		names := make([]string, 0, 1+len(fallbacks))
+		names = append(names, primary.name)
+		for _, fallback := range fallbacks {
+			names = append(names, fallback.name)
+		}
+		return strings.Join(names, " -> ")
+	}
+
+	makeSet := func(primary protocolClient, fallbacks ...protocolClient) *clientSet {
+		set := &clientSet{primary: primary, fallbacks: fallbacks}
+		if http3Transport != nil {
+			if primary.name == types.ProtocolHTTP3 {
+				set.http3Transport = http3Transport
+			} else {
+				for _, fallback := range fallbacks {
+					if fallback.name == types.ProtocolHTTP3 {
+						set.http3Transport = http3Transport
+						break
+					}
 				}
 			}
-			return nil
-		},
+		}
+		utils.Debug("Transport selection: pref=%s supports[h2=%t h3=%t] chain=%s", protocol, supportsHTTP2, supportsHTTP3, formatNames(primary, fallbacks))
+		return set
+	}
+
+	switch protocol {
+	case types.ProtocolHTTP1:
+		return makeSet(http1Client)
+	case types.ProtocolHTTP2:
+		if supportsHTTP2 {
+			return makeSet(http2Client, http1Client)
+		}
+		return makeSet(http1Client)
+	case types.ProtocolHTTP3:
+		if supportsHTTP3 {
+			return makeSet(http3Client, http1Client)
+		}
+		return makeSet(http1Client)
+	default:
+		if supportsHTTP3 {
+			if supportsHTTP2 {
+				return makeSet(http3Client, http2Client, http1Client)
+			}
+			return makeSet(http3Client, http1Client)
+		}
+		if supportsHTTP2 {
+			return makeSet(http2Client, http1Client)
+		}
+		return makeSet(http1Client)
 	}
 }
 
 // Download downloads a file using multiple concurrent connections.
 // Uses pre-probed metadata so we can preallocate and size the task queue.
-func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, candidateMirrors []string, activeMirrors []string, destPath string, fileSize int64) error {
+func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, candidateMirrors []string, activeMirrors []string, destPath string, fileSize int64, supportsHTTP2 bool, supportsHTTP3 bool) error {
 	utils.Debug("ConcurrentDownloader.Download: %s -> %s (size: %d, mirrors: %d)", rawurl, destPath, fileSize, len(activeMirrors))
 
 	// Store URL and path for pause/resume (final path without .GoFetch)
@@ -308,8 +424,9 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 	numConns := d.getInitialConnections(fileSize)
 	chunkSize := d.determineChunkSize(fileSize, numConns)
 
-	// Create tuned HTTP client for concurrent downloads
-	client := d.newConcurrentClient(numConns)
+	// Create tuned HTTP clients for concurrent downloads
+	clients := d.newConcurrentClients(numConns, supportsHTTP2, supportsHTTP3)
+	defer clients.Close()
 
 	// Initialize chunk visualization
 	if d.State != nil {
@@ -488,7 +605,7 @@ func (d *ConcurrentDownloader) Download(ctx context.Context, rawurl string, cand
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			err := d.worker(downloadCtx, workerID, workerMirrors, outFile, queue, fileSize, startTime, client)
+			err := d.worker(downloadCtx, workerID, workerMirrors, outFile, queue, fileSize, startTime, clients)
 			if err != nil && err != context.Canceled {
 				workerErrors <- err
 			}

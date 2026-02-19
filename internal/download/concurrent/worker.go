@@ -4,15 +4,20 @@ import (
 	"concurrent_downloader/internal/download/types"
 	"concurrent_downloader/internal/utils"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/quic-go/quic-go"
 )
 
-func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []string, file *os.File, queue *TaskQueue, totalSize int64, startTime time.Time, client *http.Client) error {
+func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []string, file *os.File, queue *TaskQueue, totalSize int64, startTime time.Time, clients *clientSet) error {
 	// Get pooled buffer
 	bufPtr := d.bufPool.Get().(*[]byte)
 	defer d.bufPool.Put(bufPtr)
@@ -82,7 +87,7 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 			}
 
 			taskStart := time.Now()
-			lastErr = d.downloadTask(taskCtx, currentURL, file, activeTask, buf, client, totalSize)
+			lastErr = d.downloadTask(taskCtx, currentURL, file, activeTask, buf, clients, totalSize)
 
 			// Capture external cancellation BEFORE calling taskCancel();
 			// otherwise taskCtx.Err() will always be non-nil.
@@ -169,32 +174,45 @@ func (d *ConcurrentDownloader) worker(ctx context.Context, id int, mirrors []str
 }
 
 // downloadTask downloads a single byte range and writes to file at offset
-func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, file *os.File, activeTask *ActiveTask, buf []byte, client *http.Client, totalSize int64) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawurl, nil)
-	if err != nil {
-		return err
-	}
 
+func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, file *os.File, activeTask *ActiveTask, buf []byte, clients *clientSet, totalSize int64) error {
 	task := activeTask.Task
+	clientsToTry := append([]protocolClient{clients.primary}, clients.fallbacks...)
 
-	// Apply custom headers first (from browser extension: cookies, auth, referer, etc.).
-	for key, val := range d.Headers {
-		// Skip Range header - we set it ourselves for parallel downloads
-		if key != "Range" {
-			req.Header.Set(key, val)
+	var resp *http.Response
+	var err error
+	for idx, protocol := range clientsToTry {
+		req, reqErr := d.newRangeRequest(ctx, rawurl, task)
+		if reqErr != nil {
+			return reqErr
 		}
+
+		resp, err = protocol.client.Do(req)
+		if err != nil {
+			if idx < len(clientsToTry)-1 && shouldFallbackForProtocol(err) {
+				utils.Debug("Protocol %s failed, retrying with fallback transport", protocol.name)
+				continue
+			}
+			return err
+		}
+
+		if resp.StatusCode == http.StatusMisdirectedRequest {
+			_ = resp.Body.Close()
+			if idx < len(clientsToTry)-1 {
+				utils.Debug("Protocol %s returned 421, retrying with fallback transport", protocol.name)
+				continue
+			}
+			return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		}
+
+		break
 	}
 
-	// Set User-Agent from config only if not provided in custom headers.
-	if req.Header.Get("User-Agent") == "" {
-		req.Header.Set("User-Agent", d.Runtime.GetUserAgent())
-	}
-	// Range header is always set for partial downloads (overrides any browser Range header).
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", task.Offset, task.Offset+task.Length-1))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
+	if resp == nil {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("request failed without response")
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -348,6 +366,57 @@ func (d *ConcurrentDownloader) downloadTask(ctx context.Context, rawurl string, 
 	}
 
 	return nil
+}
+
+func (d *ConcurrentDownloader) newRangeRequest(ctx context.Context, rawurl string, task types.Task) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawurl, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply custom headers first (from browser extension: cookies, auth, referer, etc.).
+	for key, val := range d.Headers {
+		// Skip Range header - we set it ourselves for parallel downloads
+		if key != "Range" {
+			req.Header.Set(key, val)
+		}
+	}
+
+	// Set User-Agent from config only if not provided in custom headers.
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", d.Runtime.GetUserAgent())
+	}
+	// Range header is always set for partial downloads (overrides any browser Range header).
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", task.Offset, task.Offset+task.Length-1))
+
+	return req, nil
+}
+
+func shouldFallbackForProtocol(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var protoErr *http.ProtocolError
+	if errors.As(err, &protoErr) {
+		return true
+	}
+
+	var quicErr *quic.TransportError
+	if errors.As(err, &quicErr) {
+		return true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		lower := strings.ToLower(err.Error())
+		if strings.Contains(lower, "alpn") || strings.Contains(lower, "http2") || strings.Contains(lower, "http/2") || strings.Contains(lower, "http3") || strings.Contains(lower, "quic") || strings.Contains(lower, "protocol") {
+			return true
+		}
+	}
+
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "alpn") || strings.Contains(lower, "http2") || strings.Contains(lower, "http/2") || strings.Contains(lower, "http3") || strings.Contains(lower, "quic") || strings.Contains(lower, "protocol")
 }
 
 // StealWork tries to split an active task from a busy worker

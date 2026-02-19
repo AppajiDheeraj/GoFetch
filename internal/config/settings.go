@@ -24,6 +24,7 @@ type NetworkSettings struct {
 	SequentialDownload     bool   `json:"sequential_download"`
 	MinChunkSize           int64  `json:"min_chunk_size"`
 	WorkerBufferSize       int    `json:"worker_buffer_size"`
+	ProtocolPreference     string `json:"protocol_preference"`
 }
 
 // GeneralSettings contains application behavior settings.
@@ -53,6 +54,7 @@ type ConnectionSettings struct {
 	UserAgent              string `json:"user_agent"`
 	ProxyURL               string `json:"proxy_url"`
 	SequentialDownload     bool   `json:"sequential_download"`
+	ProtocolPreference     string `json:"protocol_preference"`
 }
 
 // ChunkSettings contains download chunk configuration.
@@ -101,6 +103,7 @@ func GetSettingsMetadata() map[string][]SettingMeta {
 			{Key: "sequential_download", Label: "Sequential Download", Description: "Download pieces in order (Streaming Mode). May be slower.", Type: "bool"},
 			{Key: "min_chunk_size", Label: "Min Chunk Size", Description: "Minimum download chunk size in MB (e.g., 2).", Type: "int64"},
 			{Key: "worker_buffer_size", Label: "Worker Buffer Size", Description: "I/O buffer size per worker in KB (e.g., 512).", Type: "int"},
+			{Key: "protocol_preference", Label: "Protocol Preference", Description: "Transport preference: auto | http1 | http2 | http3. Auto will probe and choose the best available.", Type: "string"},
 		},
 		"Performance": {
 			{Key: "max_task_retries", Label: "Max Task Retries", Description: "Number of times to retry a failed chunk before giving up.", Type: "int"},
@@ -144,6 +147,7 @@ func DefaultSettings() *Settings {
 			MaxConcurrentDownloads: 3,
 			UserAgent:              "", // Empty means use default UA
 			SequentialDownload:     false,
+			ProtocolPreference:     "auto",
 		},
 		Chunks: ChunkSettings{
 			MinChunkSize:     2 * MB,
@@ -217,6 +221,7 @@ type RuntimeConfig struct {
 	MinChunkSize          int64
 	WorkerBufferSize      int
 	ForceSingle           bool
+	ProtocolPreference    string
 	MaxTaskRetries        int
 	SlowWorkerThreshold   float64
 	SlowWorkerGracePeriod time.Duration
@@ -234,6 +239,7 @@ func (s *Settings) ToRuntimeConfig() *RuntimeConfig {
 		SequentialDownload:    s.Connections.SequentialDownload,
 		MinChunkSize:          s.Chunks.MinChunkSize,
 		WorkerBufferSize:      s.Chunks.WorkerBufferSize,
+		ProtocolPreference:    s.Connections.ProtocolPreference,
 		MaxTaskRetries:        s.Performance.MaxTaskRetries,
 		SlowWorkerThreshold:   s.Performance.SlowWorkerThreshold,
 		SlowWorkerGracePeriod: s.Performance.SlowWorkerGracePeriod,

@@ -12,6 +12,7 @@ func ConvertRuntimeConfig(rc *config.RuntimeConfig) *RuntimeConfig {
 		MinChunkSize:          rc.MinChunkSize,
 		WorkerBufferSize:      rc.WorkerBufferSize,
 		ForceSingle:           rc.ForceSingle,
+		ProtocolPreference:    rc.ProtocolPreference,
 		MaxTaskRetries:        rc.MaxTaskRetries,
 		SlowWorkerThreshold:   rc.SlowWorkerThreshold,
 		SlowWorkerGracePeriod: rc.SlowWorkerGracePeriod,
