@@ -44,7 +44,10 @@ Move-Item -Force $TmpPath (Join-Path $InstallDir $BinaryName)
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($UserPath -notlike "*$InstallDir*") {
   [Environment]::SetEnvironmentVariable("Path", "$UserPath;$InstallDir", "User")
-  Write-Info "Added $InstallDir to user PATH. Restart your terminal to use gofetch."
+  Write-Info "Added $InstallDir to user PATH."
 }
+
+# Refresh PATH in the current session so gofetch works immediately.
+$env:Path = [Environment]::GetEnvironmentVariable("Path","User") + ";" + [Environment]::GetEnvironmentVariable("Path","Machine")
 
 Write-Info "GoFetch installed successfully. Run: gofetch --help"
