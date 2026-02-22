@@ -53,6 +53,7 @@ var serverStartCmd = &cobra.Command{
 		outputDir, _ := cmd.Flags().GetString("output")
 		filename, _ := cmd.Flags().GetString("filename")
 		forceSingle, _ := cmd.Flags().GetBool("force-single")
+		chunkCount, _ := cmd.Flags().GetInt("chunks")
 		exitWhenDone, _ := cmd.Flags().GetBool("exit-when-done")
 		noResume, _ := cmd.Flags().GetBool("no-resume")
 
@@ -61,7 +62,7 @@ var serverStartCmd = &cobra.Command{
 		defer removePID()
 
 		// Hand off to shared server start logic.
-		startServerLogic(cmd, args, portFlag, batchFile, outputDir, filename, forceSingle, exitWhenDone, noResume)
+		startServerLogic(cmd, args, portFlag, batchFile, outputDir, filename, forceSingle, chunkCount, exitWhenDone, noResume)
 	},
 }
 
@@ -149,6 +150,7 @@ func init() {
 	serverStartCmd.Flags().StringP("output", "o", "", "Default output directory")
 	serverStartCmd.Flags().StringP("filename", "n", "", "Override output filename (single URL only)")
 	serverStartCmd.Flags().Bool("force-single", false, "Force single-connection downloader")
+	serverStartCmd.Flags().Int("chunks", 0, "Override number of chunks/connections for this download")
 	serverStartCmd.Flags().Bool("exit-when-done", false, "Exit when all downloads complete")
 	serverStartCmd.Flags().Bool("no-resume", false, "Do not auto-resume paused downloads on startup")
 }
@@ -189,7 +191,7 @@ func cleanupRuntimeFiles() {
 	}
 }
 
-func startServerLogic(cmd *cobra.Command, args []string, portFlag int, batchFile string, outputDir string, filename string, forceSingle bool, exitWhenDone bool, noResume bool) {
+func startServerLogic(cmd *cobra.Command, args []string, portFlag int, batchFile string, outputDir string, filename string, forceSingle bool, chunkCount int, exitWhenDone bool, noResume bool) {
 	port, listener, err := bindServerListener(portFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -223,7 +225,7 @@ func startServerLogic(cmd *cobra.Command, args []string, portFlag int, batchFile
 				fmt.Fprintln(os.Stderr, "Error: --filename can only be used with a single URL")
 				return
 			}
-			processDownloads(urls, outputDir, filename, forceSingle, 0)
+			processDownloads(urls, outputDir, filename, forceSingle, chunkCount, 0)
 		}
 	}()
 

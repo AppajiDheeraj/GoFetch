@@ -96,6 +96,8 @@ Workers + Scheduler + Controller
 * Persistent state and recovery mechanisms
 * Adaptive scheduling and resource management
 
+<img src="./Archtecture.svg" width="800" ></img>
+
 ---
 
 ## Adaptive Scaling Engine

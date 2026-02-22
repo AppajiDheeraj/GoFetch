@@ -66,6 +66,10 @@ func printDownloads(jsonOutput bool) {
 		serverDownloads, err := GetRemoteDownloads(port)
 		if err == nil {
 			for _, s := range serverDownloads {
+				speed := s.Speed
+				if speed <= 0 && s.Status == "completed" {
+					speed = averageSpeedMBps(s.TotalSize, s.TimeTaken, s.AvgSpeed)
+				}
 				downloads = append(downloads, downloadInfo{
 					ID:         s.ID,
 					Filename:   s.Filename,
@@ -73,7 +77,7 @@ func printDownloads(jsonOutput bool) {
 					Progress:   s.Progress,
 					TotalSize:  s.TotalSize,
 					Downloaded: s.Downloaded,
-					Speed:      s.Speed,
+					Speed:      speed,
 				})
 			}
 		}
@@ -92,6 +96,7 @@ func printDownloads(jsonOutput bool) {
 			if d.TotalSize > 0 {
 				progress = float64(d.Downloaded) * 100 / float64(d.TotalSize)
 			}
+			speed := averageSpeedMBps(d.TotalSize, d.TimeTaken, d.AvgSpeed)
 			downloads = append(downloads, downloadInfo{
 				ID:         d.ID,
 				Filename:   d.Filename,
@@ -99,6 +104,7 @@ func printDownloads(jsonOutput bool) {
 				Progress:   progress,
 				TotalSize:  d.TotalSize,
 				Downloaded: d.Downloaded,
+				Speed:      speed,
 			})
 		}
 	}
@@ -215,6 +221,16 @@ func showDownloadDetails(partialID string, jsonOutput bool) {
 		Progress:   progress,
 	}
 	printDownloadDetail(status, jsonOutput)
+}
+
+func averageSpeedMBps(totalSize int64, timeTakenMs int64, avgSpeedBytes float64) float64 {
+	if avgSpeedBytes > 0 {
+		return avgSpeedBytes / (1024 * 1024)
+	}
+	if totalSize > 0 && timeTakenMs > 0 {
+		return float64(totalSize) * 1000 / float64(timeTakenMs) / (1024 * 1024)
+	}
+	return 0
 }
 
 func printDownloadDetail(d types.DownloadStatus, jsonOutput bool) {

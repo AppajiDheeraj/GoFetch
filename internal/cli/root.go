@@ -119,6 +119,7 @@ var rootCmd = &cobra.Command{
 		outputDir, _ := cmd.Flags().GetString("output")
 		filename, _ := cmd.Flags().GetString("filename")
 		forceSingle, _ := cmd.Flags().GetBool("force-single")
+		chunkCount, _ := cmd.Flags().GetInt("chunks")
 		noResume, _ := cmd.Flags().GetBool("no-resume")
 		exitWhenDone, _ := cmd.Flags().GetBool("exit-when-done")
 
@@ -154,7 +155,15 @@ var rootCmd = &cobra.Command{
 					fmt.Fprintln(os.Stderr, "Error: --filename can only be used with a single URL")
 					return
 				}
-				processDownloads(urls, outputDir, filename, forceSingle, 0) // 0 port = internal direct add
+				if forceSingle && chunkCount > 0 {
+					fmt.Fprintln(os.Stderr, "Error: --chunks cannot be used with --force-single")
+					return
+				}
+				if chunkCount < 0 {
+					fmt.Fprintln(os.Stderr, "Error: --chunks must be a positive number")
+					return
+				}
+				processDownloads(urls, outputDir, filename, forceSingle, chunkCount, 0) // 0 port = internal direct add
 			}
 		}()
 
@@ -213,6 +222,8 @@ func StartHeadlessConsumer() {
 		if GlobalService == nil {
 			return
 		}
+		progressState := make(map[string]*cliProgressState)
+		lastInlineID := ""
 		stream, cleanup, err := GlobalService.StreamEvents(context.Background())
 		if err != nil {
 			utils.Debug("Failed to start event stream: %v", err)
@@ -223,52 +234,213 @@ func StartHeadlessConsumer() {
 		for msg := range stream {
 			switch m := msg.(type) {
 			case events.DownloadStartedMsg:
+				finalizeInline(&lastInlineID)
 				id := m.DownloadID
 				if len(id) > 8 {
 					id = id[:8]
 				}
+				state := getOrCreateProgressState(progressState, m.DownloadID)
+				state.filename = m.Filename
+				state.total = m.Total
+				state.started = true
 				fmt.Printf("Started: %s [%s]\n", m.Filename, id)
 			case events.DownloadCompleteMsg:
+				finalizeInline(&lastInlineID)
 				atomic.AddInt32(&activeDownloads, -1)
 				id := m.DownloadID
 				if len(id) > 8 {
 					id = id[:8]
 				}
+				delete(progressState, m.DownloadID)
 				fmt.Printf("Completed: %s [%s] (in %s)\n", m.Filename, id, m.Elapsed)
 			case events.DownloadErrorMsg:
+				finalizeInline(&lastInlineID)
 				atomic.AddInt32(&activeDownloads, -1)
 				id := m.DownloadID
 				if len(id) > 8 {
 					id = id[:8]
 				}
+				delete(progressState, m.DownloadID)
 				fmt.Printf("Error: %s [%s]: %v\n", m.Filename, id, m.Err)
 			case events.DownloadQueuedMsg:
+				finalizeInline(&lastInlineID)
 				id := m.DownloadID
 				if len(id) > 8 {
 					id = id[:8]
+				}
+				state := getOrCreateProgressState(progressState, m.DownloadID)
+				if state.filename == "" {
+					state.filename = m.Filename
 				}
 				fmt.Printf("Queued: %s [%s]\n", m.Filename, id)
 			case events.DownloadPausedMsg:
+				finalizeInline(&lastInlineID)
 				id := m.DownloadID
 				if len(id) > 8 {
 					id = id[:8]
 				}
 				fmt.Printf("Paused: %s [%s]\n", m.Filename, id)
 			case events.DownloadResumedMsg:
+				finalizeInline(&lastInlineID)
 				id := m.DownloadID
 				if len(id) > 8 {
 					id = id[:8]
 				}
 				fmt.Printf("Resumed: %s [%s]\n", m.Filename, id)
 			case events.DownloadRemovedMsg:
+				finalizeInline(&lastInlineID)
 				id := m.DownloadID
 				if len(id) > 8 {
 					id = id[:8]
 				}
+				delete(progressState, m.DownloadID)
 				fmt.Printf("Removed: %s [%s]\n", m.Filename, id)
+			case events.ProgressMsg:
+				renderProgressLine(m, progressState, &lastInlineID)
+			case events.BatchProgressMsg:
+				for _, p := range m {
+					renderProgressLine(p, progressState, &lastInlineID)
+				}
 			}
 		}
 	}()
+}
+
+type cliProgressState struct {
+	filename    string
+	total       int64
+	lastPercent int
+	lastPrint   time.Time
+	started     bool
+}
+
+func getOrCreateProgressState(progressState map[string]*cliProgressState, id string) *cliProgressState {
+	state := progressState[id]
+	if state == nil {
+		state = &cliProgressState{}
+		progressState[id] = state
+	}
+	return state
+}
+
+func renderProgressLine(m events.ProgressMsg, progressState map[string]*cliProgressState, lastInlineID *string) {
+	state := getOrCreateProgressState(progressState, m.DownloadID)
+	if !state.started {
+		return
+	}
+	if state.total <= 0 && m.Total > 0 {
+		state.total = m.Total
+	}
+	if state.filename == "" {
+		state.filename = shortID(m.DownloadID)
+	}
+	percent := 0
+	if state.total > 0 {
+		percent = int(float64(m.Downloaded) * 100 / float64(state.total))
+	}
+	now := time.Now()
+	if percent == state.lastPercent && now.Sub(state.lastPrint) < 750*time.Millisecond {
+		return
+	}
+	state.lastPercent = percent
+	state.lastPrint = now
+
+	speed := m.Speed
+	eta := formatETA(state.total, m.Downloaded, speed)
+	if state.total > 0 && percent >= 100 {
+		avgSpeed := 0.0
+		if m.Elapsed > 0 {
+			avgSpeed = float64(m.Downloaded) / m.Elapsed.Seconds()
+		}
+		if avgSpeed > 0 {
+			speed = avgSpeed
+		}
+		eta = "00:00"
+	}
+
+	line := formatProgressLine(state.filename, m.DownloadID, m.Downloaded, state.total, speed, eta)
+	inline := atomic.LoadInt32(&activeDownloads) <= 1
+	if inline {
+		*lastInlineID = m.DownloadID
+		fmt.Printf("\r%s", line)
+		return
+	}
+	finalizeInline(lastInlineID)
+	fmt.Println(line)
+}
+
+func finalizeInline(lastInlineID *string) {
+	if lastInlineID == nil || *lastInlineID == "" {
+		return
+	}
+	fmt.Print("\n")
+	*lastInlineID = ""
+}
+
+func formatProgressLine(filename string, id string, downloaded int64, total int64, speed float64, etaLabel string) string {
+	short := shortID(id)
+	speedLabel := formatSpeed(speed)
+	if total <= 0 {
+		return fmt.Sprintf("%s [%s] %s %s", filename, short, utils.ConvertBytesToHumanReadable(downloaded), speedLabel)
+	}
+	percent := float64(downloaded) * 100 / float64(total)
+	bar := renderProgressBar(percent, 24)
+	return fmt.Sprintf("%s [%s] |%s| %5.1f%% %s ETA %s", filename, short, bar, percent, speedLabel, etaLabel)
+}
+
+func renderProgressBar(percent float64, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	fill := int(percent * float64(width) / 100)
+	if fill < 0 {
+		fill = 0
+	}
+	if fill > width {
+		fill = width
+	}
+	return strings.Repeat("#", fill) + strings.Repeat("-", width-fill)
+}
+
+func formatSpeed(speed float64) string {
+	if speed <= 0 {
+		return "0 B/s"
+	}
+	return fmt.Sprintf("%s/s", utils.ConvertBytesToHumanReadable(int64(speed)))
+}
+
+func formatETA(total int64, downloaded int64, speed float64) string {
+	if total <= 0 || speed <= 0 || downloaded >= total {
+		return "--:--"
+	}
+	remaining := float64(total-downloaded) / speed
+	if remaining < 0 {
+		remaining = 0
+	}
+	seconds := int64(remaining + 0.5)
+	if seconds < 60 {
+		return fmt.Sprintf("00:%02d", seconds)
+	}
+	if seconds < 3600 {
+		return fmt.Sprintf("%02d:%02d", seconds/60, seconds%60)
+	}
+	hours := seconds / 3600
+	minutes := (seconds % 3600) / 60
+	secs := seconds % 60
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, secs)
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 // findAvailablePort tries ports starting from 'start' until one is available
@@ -623,6 +795,7 @@ type DownloadRequest struct {
 	SkipApproval         bool              `json:"skip_approval,omitempty"` // Extension validated request, skip TUI prompt
 	Headers              map[string]string `json:"headers,omitempty"`       // Custom HTTP headers from browser (cookies, auth, etc.)
 	ForceSingle          bool              `json:"force_single,omitempty"`
+	ChunkCount           int               `json:"chunk_count,omitempty"`
 }
 
 // handleDownload implements both GET status lookup and POST enqueue.
@@ -679,6 +852,15 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 
 	if req.URL == "" {
 		http.Error(w, "URL is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.ChunkCount < 0 {
+		http.Error(w, "chunk_count must be a positive number", http.StatusBadRequest)
+		return
+	}
+	if req.ChunkCount > 0 && req.ForceSingle {
+		http.Error(w, "chunk_count cannot be used with force_single", http.StatusBadRequest)
 		return
 	}
 
@@ -789,8 +971,8 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 
 	// Add via service.
 	var opts *types.AddOptions
-	if req.ForceSingle {
-		opts = &types.AddOptions{ForceSingle: true}
+	if req.ForceSingle || req.ChunkCount > 0 {
+		opts = &types.AddOptions{ForceSingle: req.ForceSingle, ChunkCount: req.ChunkCount}
 	}
 	newID, err := service.Add(urlForAdd, outPath, req.Filename, mirrorsForAdd, req.Headers, opts)
 	if err != nil {
@@ -813,7 +995,7 @@ func handleDownload(w http.ResponseWriter, r *http.Request, defaultOutputDir str
 
 // processDownloads handles the logic of adding downloads either to local pool or remote server.
 // Returns the number of successfully added downloads.
-func processDownloads(urls []string, outputDir string, filename string, forceSingle bool, port int) int {
+func processDownloads(urls []string, outputDir string, filename string, forceSingle bool, chunkCount int, port int) int {
 	successCount := 0
 
 	// If port > 0, send to a remote server.
@@ -823,7 +1005,7 @@ func processDownloads(urls []string, outputDir string, filename string, forceSin
 			if url == "" {
 				continue
 			}
-			err := sendToServer(url, mirrors, outputDir, filename, forceSingle, port)
+			err := sendToServer(url, mirrors, outputDir, filename, forceSingle, chunkCount, port)
 			if err != nil {
 				fmt.Printf("Error adding %s: %v\n", url, err)
 			} else {
@@ -876,8 +1058,8 @@ func processDownloads(urls []string, outputDir string, filename string, forceSin
 		// If CLI args provided, user probably wants them added immediately.
 
 		var opts *types.AddOptions
-		if forceSingle {
-			opts = &types.AddOptions{ForceSingle: true}
+		if forceSingle || chunkCount > 0 {
+			opts = &types.AddOptions{ForceSingle: forceSingle, ChunkCount: chunkCount}
 		}
 		_, err := GlobalService.Add(url, outPath, filename, mirrors, nil, opts)
 		if err != nil {
@@ -905,6 +1087,7 @@ func init() {
 	rootCmd.Flags().StringP("filename", "n", "", "Override output filename (single URL only)")
 	rootCmd.Flags().Bool("clipboard", false, "Read URL from clipboard")
 	rootCmd.Flags().Bool("force-single", false, "Force single-connection downloader")
+	rootCmd.Flags().Int("chunks", 0, "Override number of chunks/connections for this download")
 	rootCmd.Flags().Bool("no-resume", false, "Do not auto-resume paused downloads on startup")
 	rootCmd.Flags().Bool("exit-when-done", false, "Exit when all downloads complete")
 	rootCmd.SetVersionTemplate("GoFetch v{{.Version}}\n")

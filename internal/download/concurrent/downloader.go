@@ -91,6 +91,14 @@ func (d *ConcurrentDownloader) getInitialConnections(fileSize int64) int {
 	maxConns := d.Runtime.GetMaxConnectionsPerHost()
 	minChunkSize := d.Runtime.GetMinChunkSize() // e.g., 1MB or 5MB
 
+	// Respect user override if provided.
+	if requested := d.Runtime.GetRequestedConnections(); requested > 0 {
+		if requested < 1 {
+			return 1
+		}
+		return requested
+	}
+
 	if fileSize <= 0 {
 		return 1
 	}
@@ -154,10 +162,12 @@ func (d *ConcurrentDownloader) calculateChunkSize(fileSize int64, numConns int) 
 	chunkSize := fileSize / int64(numConns)
 
 	// Clamp to min from config (but not max - we want large chunks)
-	minChunk := d.Runtime.GetMinChunkSize()
-
-	if chunkSize < minChunk {
-		chunkSize = minChunk
+	// Skip clamp when user explicitly requests a chunk count.
+	if d.Runtime.GetRequestedConnections() <= 0 {
+		minChunk := d.Runtime.GetMinChunkSize()
+		if chunkSize < minChunk {
+			chunkSize = minChunk
+		}
 	}
 
 	// Align to 4KB

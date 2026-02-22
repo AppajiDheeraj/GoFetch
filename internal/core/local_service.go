@@ -452,8 +452,13 @@ func (s *LocalDownloadService) Add(url string, path string, filename string, mir
 	state.DestPath = filepath.Join(outPath, filename) // Best guess until download starts
 
 	runtimeCfg := types.ConvertRuntimeConfig(settings.ToRuntimeConfig())
-	if opts != nil && opts.ForceSingle {
-		runtimeCfg.ForceSingle = true
+	if opts != nil {
+		if opts.ForceSingle {
+			runtimeCfg.ForceSingle = true
+		}
+		if opts.ChunkCount > 0 {
+			runtimeCfg.RequestedConnections = opts.ChunkCount
+		}
 	}
 
 	cfg := types.DownloadConfig{

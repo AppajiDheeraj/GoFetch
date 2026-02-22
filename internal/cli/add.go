@@ -22,6 +22,7 @@ var addCmd = &cobra.Command{
 		clipboardFlag, _ := cmd.Flags().GetBool("clipboard")
 		filename, _ := cmd.Flags().GetString("filename")
 		forceSingle, _ := cmd.Flags().GetBool("force-single")
+		chunkCount, _ := cmd.Flags().GetInt("chunks")
 
 		// Collect URLs from multiple sources to keep CLI UX simple.
 		var urls []string
@@ -64,6 +65,15 @@ var addCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if forceSingle && chunkCount > 0 {
+			fmt.Fprintln(os.Stderr, "Error: --chunks cannot be used with --force-single")
+			os.Exit(1)
+		}
+		if chunkCount < 0 {
+			fmt.Fprintln(os.Stderr, "Error: --chunks must be a positive number")
+			os.Exit(1)
+		}
+
 		// Check if GoFetch is running to decide local vs remote add.
 		port := readActivePort()
 		if port == 0 {
@@ -73,7 +83,7 @@ var addCmd = &cobra.Command{
 		}
 
 		// Send downloads to server
-		count := processDownloads(urls, output, filename, forceSingle, port)
+		count := processDownloads(urls, output, filename, forceSingle, chunkCount, port)
 
 		if count > 0 {
 			fmt.Printf("Successfully added %d downloads.\n", count)
@@ -88,4 +98,5 @@ func init() {
 	addCmd.Flags().StringP("filename", "n", "", "Override output filename (single URL only)")
 	addCmd.Flags().Bool("clipboard", false, "Read URL from clipboard")
 	addCmd.Flags().Bool("force-single", false, "Force single-connection downloader")
+	addCmd.Flags().Int("chunks", 0, "Override number of chunks/connections for this download")
 }

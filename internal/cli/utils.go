@@ -63,7 +63,7 @@ func ParseURLArg(arg string) (string, []string) {
 	return urls[0], urls
 }
 
-func sendToServer(url string, mirrors []string, outPath string, filename string, forceSingle bool, port int) error {
+func sendToServer(url string, mirrors []string, outPath string, filename string, forceSingle bool, chunkCount int, port int) error {
 	// Keep payload minimal; server applies defaults and validation.
 	reqBody := DownloadRequest{
 		URL:         url,
@@ -71,6 +71,7 @@ func sendToServer(url string, mirrors []string, outPath string, filename string,
 		Mirrors:     mirrors,
 		Path:        outPath,
 		ForceSingle: forceSingle,
+		ChunkCount:  chunkCount,
 	}
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {

@@ -73,6 +73,7 @@ type DownloadConfig struct {
 // AddOptions provides per-request overrides for download behavior.
 type AddOptions struct {
 	ForceSingle bool
+	ChunkCount  int
 }
 
 type RuntimeConfig struct {
@@ -83,6 +84,7 @@ type RuntimeConfig struct {
 	SequentialDownload    bool
 	MinChunkSize          int64
 	ForceSingle           bool
+	RequestedConnections  int
 	ProtocolPreference    string
 
 	WorkerBufferSize      int
@@ -114,6 +116,14 @@ func (r *RuntimeConfig) GetMaxConnectionsPerHost() int {
 		return PerHostMax
 	}
 	return r.MaxConnectionsPerHost
+}
+
+// GetRequestedConnections returns the override for connection count, if set.
+func (r *RuntimeConfig) GetRequestedConnections() int {
+	if r == nil || r.RequestedConnections <= 0 {
+		return 0
+	}
+	return r.RequestedConnections
 }
 
 // GetMinChunkSize returns configured value or default

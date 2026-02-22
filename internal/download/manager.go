@@ -245,6 +245,10 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 		if cfg.State != nil && cfg.State.SavedElapsed > 0 {
 			elapsed += cfg.State.SavedElapsed
 		}
+		avgSpeed := 0.0
+		if elapsed.Seconds() > 0 && probe.FileSize > 0 {
+			avgSpeed = float64(probe.FileSize) / elapsed.Seconds()
+		}
 
 		// Persist to history before sending event so UI queries are consistent.
 		if err := state.AddToMasterList(types.DownloadEntry{
@@ -258,6 +262,7 @@ func CLIDownload(ctx context.Context, cfg *types.DownloadConfig) error {
 			Downloaded:  probe.FileSize,
 			CompletedAt: time.Now().Unix(),
 			TimeTaken:   elapsed.Milliseconds(),
+			AvgSpeed:    avgSpeed,
 		}); err != nil {
 			utils.Debug("Failed to persist completed download: %v", err)
 		}
